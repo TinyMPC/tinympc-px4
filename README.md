@@ -14,6 +14,14 @@ The repository supports two intentionally separate control boundaries:
   retains acceleration-to-attitude conversion, attitude/rate control, control
   allocation, and safety handling.
 
+There is also a **native-only experimental full-state path** built from the
+supplied 50 Hz hover-linearized `A/B` matrices. It makes normalized motor
+commands and motor slew part of the MPC state/control problem, allowing one
+horizon to enforce position, attitude, body-rate, motor-authority, and slew
+limits together. It is deliberately not connected to the PX4 actuator output:
+the matrix airframe, motor order, command scaling, and local attitude-error
+conversion still need target validation.
+
 > [!CAUTION]
 > This is an experimental research prototype, not a flight-certified
 > controller. Reproduce the native and Software-in-the-Loop (SITL) tests before
@@ -60,6 +68,17 @@ The native benchmark also includes `wall_baseline`, which uses the same model,
 reference, input limits, and 0.9 m/s disturbance without the wall constraint.
 The implemented scenario definitions and solver policy are documented in
 [`docs/constraint_examples.md`](docs/constraint_examples.md).
+
+The separate full-state benchmark compares the supplied motor-level model
+with and without predictive flight-envelope bounds. Both receive the same
+unsafe `x = 0.95 m` request. With a `0.855 m` planning boundary inside a
+`0.87 m` physical wall, the constrained case reaches approximately `0.853 m`;
+the reactive baseline reaches `0.952 m`. The same run checks normalized motor
+commands in `[0.05, 0.60]`, command slew at `0.045/sample`, attitude/body-rate
+bounds, and an asymmetric degraded-motor case capped at `0.340`. See
+[`docs/full_state_actuator_constraints.md`](docs/full_state_actuator_constraints.md)
+for the model convention, exact experiment, limitations, and flight-integration
+gate.
 
 ## Current validation status
 
@@ -123,6 +142,16 @@ Run all deterministic constrained examples and print CSV metrics:
 The benchmark asserts finite outputs, solver-projected state/input bounds,
 scenario-level closed-loop limits, and zero fallbacks. It reports iterations,
 residuals, best-effort solves, and optimized desktop timing percentiles.
+
+Run the experimental supplied-matrix motor/flight-envelope comparison:
+
+```bash
+./scripts/run_full_state_benchmark.sh
+```
+
+This is a native model-in-the-loop experiment, not a PX4 motor-output build.
+Its desktop p50/p95/p99 timing is only a regression measurement; it does not
+establish the 20 ms deadline on a flight-controller MCU.
 
 ## Generate the PX4 app
 
@@ -252,7 +281,7 @@ The next research steps and fair comparison protocol are in
 - `quadtest/quadtest.slx`: uORB state readers, TinyMPC controller call, and
   trajectory-setpoint writer.
 - `quadtest/wrapper/`: C API, constraints, diagnostics, native smoke test, and
-  deterministic benchmark.
+  deterministic benchmarks, including the opt-in full-state/motor experiment.
 - `quadtest/tinympc/TinyMPC/`: vendored TinyMPC source used by native tests and
   the generated PX4 app.
 - `quadtest/setup_tinympc_px4.m`: deterministic model and custom-code setup.

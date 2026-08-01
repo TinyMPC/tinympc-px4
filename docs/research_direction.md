@@ -15,6 +15,22 @@ TinyMPC: position/velocity feedback, trajectory constraints, acceleration plan
 PX4:     acceleration-to-attitude/thrust, attitude/rate loops, allocation, safety
 ```
 
+The repository now also contains a native-only experimental boundary:
+
+```text
+TinyMPC: position + local attitude + velocity + body-rate prediction
+         motor magnitude + motor slew constraints -> four motor commands
+PX4:     estimation, mode/arming/failsafe handling (future integration)
+```
+
+This path is useful because the same horizon sees the virtual wall and the
+actuator/attitude envelope. Stock PX4 has individual position/trajectory
+limits, cascaded attitude/rate loops, and constrained control allocation, but
+does not normally optimize all of those future constraints in one MPC
+problem. The checked-in version is intentionally not wired to actuators until
+the supplied model, motor order/scaling, and attitude-error conversion are
+validated on the target airframe.
+
 Guidance mode remains valuable as a conservative integration baseline, but it
 does not isolate TinyMPC constraint enforcement because PX4's position loop can
 modify the downstream acceleration.
@@ -87,6 +103,8 @@ guidance, and TinyMPC direct. Report failure cases, not only successful runs.
 5. Add estimator-reset handling and an explicit arming/engagement reset.
 6. Add coupled tilt/thrust constraints and robust backoffs.
 7. Automate SIH/Gazebo matched-baseline runs and ULog metric extraction.
+8. Validate the supplied full-state/motor model, then connect its output at a
+   PX4 control-allocation boundary rather than bypassing arming and failsafes.
 
 These tasks are more important to the onboard contribution than adding many
 unvalidated trajectories.

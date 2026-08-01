@@ -99,3 +99,8 @@ The native benchmark prints these metrics plus optimized desktop p50/p95/p99
 and worst solve time. The current Simulink app computes the diagnostic vector
 but does not yet publish it to uORB. Publishing it to a logged PX4 diagnostic
 topic is a required hardware-validation task.
+
+The supplied-matrix, motor-level experiment uses a separate API and solver so
+it cannot be selected accidentally by the trajectory-setpoint flight demo.
+Its augmented-state constraints and benchmark are documented in
+[`full_state_actuator_constraints.md`](full_state_actuator_constraints.md).
