@@ -1,0 +1,48 @@
+--- MW_uORB_Write.cpp
++++ MW_uORB_Write.cpp
+@@ -37,6 +37,8 @@
+ #include "MW_PX4_TaskControl.h"
+ #include "MW_uORB_Write.h"
+ 
++#include <drivers/drv_hrt.h>
++#include <uORB/topics/offboard_control_mode.h>
+ #include <uORB/uORBManager.hpp>
+ #include <uORB/uORBDeviceMaster.hpp>
+ #include <uORB/uORBDeviceNode.hpp>
+@@ -100,7 +102,36 @@
+     if (*orbAdvertObj == nullptr) {
+         return;
+     }
++    /* Every PX4 uORB message begins with a uint64 timestamp, and consumers
++     * treat 0 as infinitely stale. The generated bus leaves it unset, so
++     * stamp the publish time when the model has not provided one. */
++    if (busData != nullptr && *static_cast<uint64_t*>(busData) == 0u) {
++        *static_cast<uint64_t*>(busData) = hrt_absolute_time();
++    }
+     orb_publish(orbData, *orbAdvertObj, busData);
++
++    /* Offboard heartbeat: when the model publishes trajectory_setpoint,
++     * also broadcast offboard_control_mode at ~2.5 Hz so the commander
++     * accepts and holds Offboard mode with this app as the sole setpoint
++     * source (PX4 requires the heartbeat from the setpoint provider). */
++    if (orbData == ORB_ID(trajectory_setpoint)) {
++        static orb_advert_t ocm_advert = nullptr;
++        static hrt_abstime ocm_last = 0;
++        const hrt_abstime now = hrt_absolute_time();
++        if (now - ocm_last > 400000) {
++            ocm_last = now;
++            offboard_control_mode_s ocm{};
++            ocm.timestamp = now;
++            ocm.position = true;
++            ocm.velocity = true;
++            ocm.acceleration = true;
++            if (ocm_advert == nullptr) {
++                ocm_advert = orb_advertise(ORB_ID(offboard_control_mode), &ocm);
++            } else {
++                orb_publish(ORB_ID(offboard_control_mode), ocm_advert, &ocm);
++            }
++        }
++    }
+ }
+ 
+ /**

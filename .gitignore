@@ -1,0 +1,16 @@
+third_party/
+
+# MATLAB/Simulink generated artifacts
+quadtest/*.slxc
+quadtest/quadtest_ert_rtw/
+quadtest/slprj/
+*.asv
+
+# Native build products and legacy prebuilt libraries
+quadtest/lib/
+quadtest/tinympc/TinyMPC/build/
+quadtest/tinympc/TinyMPC/binaries/
+
+# Editor and operating-system metadata
+.DS_Store
+*~
