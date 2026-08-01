@@ -141,4 +141,36 @@ assignin('base','nx',nx);
 assignin('base','nu',nu);
 assignin('base','Ts',Ts);
 
+% Build-time demo selection. Stateflow declares these as non-tunable chart
+% parameters, so the generated PX4 app contains no environment-variable or
+% string parsing. Unknown values fail closed to the verified hover/guidance
+% configuration.
+scenarioName = lower(strtrim(getenv('TINY_MPC_SCENARIO')));
+switch scenarioName
+    case {'virtual_wall','wall'}
+        TinyMPCScenario = int32(1);
+    case 'corridor'
+        TinyMPCScenario = int32(2);
+    case {'reduced_authority','reduced'}
+        TinyMPCScenario = int32(3);
+    otherwise
+        TinyMPCScenario = int32(0);
+        scenarioName = 'hover';
+end
+
+outputModeName = lower(strtrim(getenv('TINY_MPC_OUTPUT_MODE')));
+if strcmp(outputModeName,'direct') || strcmp(outputModeName,'acceleration')
+    TinyMPCOutputMode = int32(1);
+    outputModeName = 'direct';
+else
+    TinyMPCOutputMode = int32(0);
+    outputModeName = 'guidance';
+end
+
+assignin('base','TinyMPCScenario',TinyMPCScenario);
+assignin('base','TinyMPCOutputMode',TinyMPCOutputMode);
+
+fprintf('TinyMPC scenario: %s (%d)\n',scenarioName,TinyMPCScenario);
+fprintf('TinyMPC output mode: %s (%d)\n',outputModeName,TinyMPCOutputMode);
+
 disp('TinyMPC initialized.')

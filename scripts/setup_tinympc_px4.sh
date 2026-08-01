@@ -15,7 +15,7 @@ if ! command -v cmake >/dev/null 2>&1; then
   exit 1
 fi
 
-cmake_args=(-S "${tinympc_dir}" -B "${build_dir}")
+cmake_args=(-S "${tinympc_dir}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release)
 if command -v ninja >/dev/null 2>&1 && [ ! -f "${build_dir}/CMakeCache.txt" ]; then
   cmake_args+=(-G Ninja)
 fi
