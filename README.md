@@ -96,6 +96,16 @@ test the vehicle remained in Offboard for 151 seconds and held altitude within
 about 3 cm. A recording is included at
 [`media/tinympc_hover_gazebo.mp4`](media/tinympc_hover_gazebo.mp4).
 
+Gazebo recordings of the direct-acceleration maneuvers are also included:
+
+- [virtual wall](media/tinympc_virtual_wall_gazebo.mp4);
+- [corridor](media/tinympc_corridor_gazebo.mp4); and
+- [reduced authority](media/tinympc_reduced_authority_gazebo.mp4).
+
+These are visual integration demonstrations, not evidence that the predicted
+constraints are guaranteed in flight. The deterministic native benchmarks and
+future ULog-based metrics remain the quantitative constraint checks.
+
 The deterministic native benchmark currently shows the constrained wall case
 remaining at approximately 1.001 m after the injected disturbance, versus
 1.028 m for the matched unconstrained baseline. The corridor case remains
