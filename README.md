@@ -99,7 +99,8 @@ about 3 cm. A recording is included at
 Gazebo recordings of the direct-acceleration maneuvers are also included:
 
 - [virtual wall](media/tinympc_virtual_wall_gazebo.mp4);
-- [corridor](media/tinympc_corridor_gazebo.mp4); and
+- [corridor](media/tinympc_corridor_gazebo.mp4), with a synchronized top-down
+  PX4 ground-truth overlay showing the `y = ±0.35 m` planning bounds; and
 - [reduced authority](media/tinympc_reduced_authority_gazebo.mp4).
 
 These are visual integration demonstrations, not evidence that the predicted
