@@ -1,0 +1,109 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="tinympc_figure_eight_course">
+    <static>true</static>
+
+    <!--
+      Four visual gates sit at the outer quarters of the
+      engagement-relative Gerono figure-eight. PX4 NED x maps to Gazebo y,
+      PX4 NED y maps to Gazebo x, and NED -z maps to Gazebo +z.
+
+      Nominal PX4 gate centers:
+        (+1.061, +0.700, -0.675), (+1.061, -0.700, -0.675),
+        (-1.061, +0.700, -0.675), (-1.061, -0.700, -0.675).
+
+      There is deliberately no wind or other external disturbance in this
+      course. The comparison isolates the coupled tilt/thrust constraint.
+    -->
+
+    <link name="northeast_gate">
+      <pose>0.70 1.061 0 0 0 0</pose>
+      <visual name="left_post_visual">
+        <pose>-0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>0.05 0.95 0.35 1</ambient><diffuse>0.08 1 0.42 1</diffuse></material>
+      </visual>
+      <visual name="right_post_visual">
+        <pose>0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>0.05 0.95 0.35 1</ambient><diffuse>0.08 1 0.42 1</diffuse></material>
+      </visual>
+      <visual name="top_visual">
+        <pose>0 0 1.75 0 0 0</pose>
+        <geometry><box><size>1.42 0.12 0.12</size></box></geometry>
+        <material><ambient>0.05 0.95 0.35 1</ambient><diffuse>0.08 1 0.42 1</diffuse></material>
+      </visual>
+    </link>
+
+    <link name="northwest_gate">
+      <pose>-0.70 1.061 0 0 0 0</pose>
+      <visual name="left_post_visual">
+        <pose>-0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>0.10 0.72 1 1</ambient><diffuse>0.12 0.78 1 1</diffuse></material>
+      </visual>
+      <visual name="right_post_visual">
+        <pose>0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>0.10 0.72 1 1</ambient><diffuse>0.12 0.78 1 1</diffuse></material>
+      </visual>
+      <visual name="top_visual">
+        <pose>0 0 1.75 0 0 0</pose>
+        <geometry><box><size>1.42 0.12 0.12</size></box></geometry>
+        <material><ambient>0.10 0.72 1 1</ambient><diffuse>0.12 0.78 1 1</diffuse></material>
+      </visual>
+    </link>
+
+    <link name="southeast_gate">
+      <pose>0.70 -1.061 0 0 0 0</pose>
+      <visual name="left_post_visual">
+        <pose>-0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>1 0.56 0.05 1</ambient><diffuse>1 0.62 0.08 1</diffuse></material>
+      </visual>
+      <visual name="right_post_visual">
+        <pose>0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>1 0.56 0.05 1</ambient><diffuse>1 0.62 0.08 1</diffuse></material>
+      </visual>
+      <visual name="top_visual">
+        <pose>0 0 1.75 0 0 0</pose>
+        <geometry><box><size>1.42 0.12 0.12</size></box></geometry>
+        <material><ambient>1 0.56 0.05 1</ambient><diffuse>1 0.62 0.08 1</diffuse></material>
+      </visual>
+    </link>
+
+    <link name="southwest_gate">
+      <pose>-0.70 -1.061 0 0 0 0</pose>
+      <visual name="left_post_visual">
+        <pose>-0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>0.92 0.12 0.88 1</ambient><diffuse>1 0.16 0.95 1</diffuse></material>
+      </visual>
+      <visual name="right_post_visual">
+        <pose>0.65 0 0.875 0 0 0</pose>
+        <geometry><box><size>0.12 0.12 1.75</size></box></geometry>
+        <material><ambient>0.92 0.12 0.88 1</ambient><diffuse>1 0.16 0.95 1</diffuse></material>
+      </visual>
+      <visual name="top_visual">
+        <pose>0 0 1.75 0 0 0</pose>
+        <geometry><box><size>1.42 0.12 0.12</size></box></geometry>
+        <material><ambient>0.92 0.12 0.88 1</ambient><diffuse>1 0.16 0.95 1</diffuse></material>
+      </visual>
+    </link>
+
+    <link name="center_crossing_marker">
+      <pose>0 0 0.012 0 0 0</pose>
+      <visual name="diagonal_one">
+        <pose>0 0 0 0 0 0.785398</pose>
+        <geometry><box><size>0.90 0.07 0.024</size></box></geometry>
+        <material><ambient>1 0.9 0.08 1</ambient><diffuse>1 0.95 0.12 1</diffuse></material>
+      </visual>
+      <visual name="diagonal_two">
+        <pose>0 0 0 0 0 -0.785398</pose>
+        <geometry><box><size>0.90 0.07 0.024</size></box></geometry>
+        <material><ambient>1 0.9 0.08 1</ambient><diffuse>1 0.95 0.12 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

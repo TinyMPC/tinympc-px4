@@ -63,6 +63,8 @@ state does not make the problem infeasible by definition.
 | `virtual_wall` | Target 0.85 m forward; 0.98 m planning boundary inside a 1.0 m wall; velocity and input limits | Predictive braking before a geofence |
 | `corridor` | Fly 2 m forward and 0.25 m laterally inside a ±0.35 m corridor | Coupled tracking with a lateral state constraint |
 | `reduced_authority` | Move 1 m forward while horizontal acceleration is limited to ±0.75 m/s², vertical acceleration to ±1.5 m/s², and yaw rate to ±0.5 rad/s | Replanning with degraded control authority |
+| `figure_eight_soc` | Fly a smooth 3D figure-eight while enforcing `sqrt(ax²+ay²) <= tan(15°) Tz` and a thrust/input envelope at every horizon knot | Joint trajectory and coupled tilt/thrust planning without an external disturbance |
+| `figure_eight_box` | Same model, reference, costs, and boxes with only the cone removed | Matched intrinsic baseline for the SOC constraint |
 
 The native benchmark also includes `wall_baseline`, which uses the same model,
 reference, input limits, and 0.9 m/s disturbance without the wall constraint.
@@ -101,20 +103,37 @@ Gazebo recordings of the direct-acceleration maneuvers are also included:
 - [virtual wall](media/tinympc_virtual_wall_gazebo.mp4);
 - [corridor](media/tinympc_corridor_gazebo.mp4), flown between visible,
   collision-enabled Gazebo walls surrounding the `y = ±0.35 m` planning
-  corridor; and
-- [reduced authority](media/tinympc_reduced_authority_gazebo.mp4).
+  corridor;
+- [reduced authority](media/tinympc_reduced_authority_gazebo.mp4); and
+- [no-wind SOC figure-eight](media/tinympc_figure_eight_soc_gazebo.mp4), flown
+  through four visual trajectory arches.
 
 The corridor scene geometry is included at
 [`quadtest/gazebo/tinympc_corridor.sdf`](quadtest/gazebo/tinympc_corridor.sdf).
+The no-wind figure-eight course uses four visual arches located on the actual
+trajectory. They intentionally have no collision geometry, so the SOC demo
+does not introduce an unmodeled impact disturbance. The scene is included at
+[`quadtest/gazebo/tinympc_figure_eight_course.sdf`](quadtest/gazebo/tinympc_figure_eight_course.sdf).
 
 These are visual integration demonstrations, not evidence that the predicted
 constraints are guaranteed in flight. The deterministic native benchmarks and
 future ULog-based metrics remain the quantitative constraint checks.
 
+The accepted PX4/Gazebo figure-eight take completed both lobes (`x` from
+`-1.334` to `+1.487 m`, `y` from `-0.731` to `+0.936 m`), had zero commanded
+cone violation, no PX4 failsafe, and a normal landing/disarm. PX4's downstream
+attitude loop reached about `28.4 deg` roll, so the `15 deg` acceleration cone
+is not a measured-airframe attitude guarantee. Closing that model/inner-loop
+gap remains part of the motor-level integration gate.
+
 The deterministic native benchmark currently shows the constrained wall case
 remaining at approximately 1.001 m after the injected disturbance, versus
 1.028 m for the matched unconstrained baseline. The corridor case remains
 inside 0.35 m and the reduced-authority case respects its smaller input box.
+In the no-disturbance 3D figure-eight, the SOC controller completes both lobes
+at a maximum equivalent tilt of 15.000 degrees with zero cone violation and
+zero fallbacks; the matched box-only controller reaches 15.969 degrees and
+violates the cone metric by 0.177 m/s².
 Reported desktop solve timing is included in the CSV output, but it is **not**
 a substitute for Pixhawk-class target timing.
 
@@ -218,8 +237,9 @@ TINY_MPC_SCENARIO=corridor TINY_MPC_OUTPUT_MODE=direct \
 ./scripts/build_px4_sitl.sh
 ```
 
-Valid flight scenarios are `hover`, `virtual_wall`, `corridor`, and
-`reduced_authority`. Valid output modes are `guidance` and `direct`.
+Valid flight scenarios are `hover`, `virtual_wall`, `corridor`,
+`reduced_authority`, `figure_eight_soc`, and `figure_eight_box`. Valid output
+modes are `guidance` and `direct`.
 
 ## Fly in SIH SITL
 
@@ -268,6 +288,16 @@ PX4_SYS_AUTOSTART=4001 PX4_SIM_MODEL=gz_x500 HEADLESS=1 \
 ```
 
 Attach a GUI with `gz sim -g` if desired, then use the same PX4 shell commands.
+Spawn the visible geometry into the running `default` world before arming:
+
+```bash
+./scripts/spawn_gazebo_course.sh figure_eight
+# or: ./scripts/spawn_gazebo_course.sh corridor
+```
+
+The figure-eight course uses visual trajectory gates without collision geometry
+and adds no wind or other disturbance plugin. The matched native SOC/box
+benchmark provides the quantitative constraint comparison.
 If arming reports a yaw-estimate error, wait for EKF convergence. If parameters
 from an earlier run cause preflight failures, stop PX4, remove only
 `rootfs/parameters*.bson`, and restart it.

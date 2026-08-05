@@ -153,6 +153,10 @@ switch scenarioName
         TinyMPCScenario = int32(2);
     case {'reduced_authority','reduced'}
         TinyMPCScenario = int32(3);
+    case {'figure_eight_soc','figure8_soc','figure_eight'}
+        TinyMPCScenario = int32(5);
+    case {'figure_eight_box','figure8_box'}
+        TinyMPCScenario = int32(6);
     otherwise
         TinyMPCScenario = int32(0);
         scenarioName = 'hover';

@@ -66,9 +66,13 @@ motor loss to translational authority is validated.
 
 ### 4. Tilt/thrust envelope
 
-Replace independent acceleration boxes with a physically meaningful coupled
-tilt/thrust constraint. TinyMPC supports conic constraints, but the chosen
-specific-force convention and PX4 hover-thrust mapping must match the vehicle.
+The checked-in no-disturbance figure-eight is the deterministic first step. It
+uses `sqrt(a_x^2+a_y^2) <= tan(15 deg) T_z`, with `T_z=g-a_z`, and compares it
+against a matched box-only TinyMPC. The next validation step is to confirm this
+specific-force convention through the PX4 acceleration-to-attitude/thrust
+mapping and measure the resulting attitude from ULog. The constraint should
+not be described as a physical tilt guarantee until that mapping and model
+error are included.
 
 ### 5. Constraint-aware landing
 
@@ -101,7 +105,7 @@ guidance, and TinyMPC direct. Report failure cases, not only successful runs.
 4. Identify translational dynamics and acceleration/thrust mapping for the
    actual airframe.
 5. Add estimator-reset handling and an explicit arming/engagement reset.
-6. Add coupled tilt/thrust constraints and robust backoffs.
+6. Add model-error backoff to the coupled tilt/thrust constraint.
 7. Automate SIH/Gazebo matched-baseline runs and ULog metric extraction.
 8. Validate the supplied full-state/motor model, then connect its output at a
    PX4 control-allocation boundary rather than bypassing arming and failsafes.

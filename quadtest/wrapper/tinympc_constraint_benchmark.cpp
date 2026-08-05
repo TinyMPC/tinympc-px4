@@ -9,15 +9,21 @@
 namespace {
 
 constexpr float kDt = 0.02f;
-constexpr int kSteps = 400;
+constexpr int kSteps = 700;
+constexpr float kGravity = 9.80665f;
+constexpr float kFigureEightConeSlope = 0.26794919f;
 
 struct Result {
     int scenario;
     const char* name;
     float maxX;
+    float minX;
     float maxAbsY;
     float maxSpeed;
     float maxAccel;
+    float maxHorizontalAccel;
+    float maxEquivalentTiltDeg;
+    float maxFigureEightConeViolation;
     float maxPrimal;
     float maxDual;
     float maxPlannedStateViolation;
@@ -51,8 +57,8 @@ Result runScenario(int scenario, const char* name)
     float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT] = {0.0f};
 
     MPC_Reset();
-    Result result{scenario, name, x[0], 0.0f, 0.0f, 0.0f,
-                  0.0f, 0.0f, 0.0f, 0.0f,
+    Result result{scenario, name, x[0], x[0], 0.0f, 0.0f, 0.0f, 0.0f,
+                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                   0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0};
     std::array<double, kSteps> solveTimesUs{};
 
@@ -76,11 +82,25 @@ Result runScenario(int scenario, const char* name)
         integrate(x, u);
 
         result.maxX = std::max(result.maxX, x[0]);
+        result.minX = std::min(result.minX, x[0]);
         result.maxAbsY = std::max(result.maxAbsY, std::fabs(x[1]));
         result.maxSpeed = std::max(result.maxSpeed,
                                    std::sqrt(x[6] * x[6] + x[7] * x[7] + x[8] * x[8]));
         result.maxAccel = std::max(result.maxAccel,
                                    std::max({std::fabs(u[0]), std::fabs(u[1]), std::fabs(u[2])}));
+        const float horizontalAccel = std::sqrt(u[0] * u[0] + u[1] * u[1]);
+        result.maxHorizontalAccel = std::max(result.maxHorizontalAccel,
+                                             horizontalAccel);
+        const float verticalSpecificThrust = kGravity - u[2];
+        result.maxEquivalentTiltDeg = std::max(
+            result.maxEquivalentTiltDeg,
+            std::atan2(horizontalAccel, std::max(0.0f, verticalSpecificThrust)) *
+                180.0f / 3.14159265358979323846f);
+        result.maxFigureEightConeViolation = std::max(
+            result.maxFigureEightConeViolation,
+            std::max(0.0f,
+                     horizontalAccel -
+                     kFigureEightConeSlope * verticalSpecificThrust));
         result.maxPrimal = std::max(result.maxPrimal,
                                     diagnostics[TINY_MPC_DIAG_PRIMAL_RESIDUAL]);
         result.maxDual = std::max(result.maxDual,
@@ -117,14 +137,21 @@ int main()
         runScenario(TINY_MPC_SCENARIO_VIRTUAL_WALL, "virtual_wall"),
         runScenario(TINY_MPC_SCENARIO_WALL_UNCONSTRAINED, "wall_baseline"),
         runScenario(TINY_MPC_SCENARIO_CORRIDOR, "corridor"),
-        runScenario(TINY_MPC_SCENARIO_REDUCED_AUTHORITY, "reduced_authority")
+        runScenario(TINY_MPC_SCENARIO_REDUCED_AUTHORITY, "reduced_authority"),
+        runScenario(TINY_MPC_SCENARIO_FIGURE_EIGHT_SOC, "figure_eight_soc"),
+        runScenario(TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX, "figure_eight_box")
     };
 
-    std::puts("scenario,name,max_x,max_abs_y,max_speed,max_accel,max_primal,max_dual,max_planned_state_violation,max_planned_input_violation,solve_p50_us,solve_p95_us,solve_p99_us,solve_max_us,max_iterations,converged,best_effort,fallbacks");
+    std::puts("scenario,name,max_x,min_x,max_abs_y,max_speed,max_accel,max_horizontal_accel,max_equivalent_tilt_deg,max_figure_eight_cone_violation,max_primal,max_dual,max_planned_state_violation,max_planned_input_violation,solve_p50_us,solve_p95_us,solve_p99_us,solve_max_us,max_iterations,converged,best_effort,fallbacks");
     for (const Result& result : results) {
-        std::printf("%d,%s,%.6f,%.6f,%.6f,%.6f,%.6g,%.6g,%.6g,%.6g,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d\n",
-                    result.scenario, result.name, result.maxX, result.maxAbsY,
-                    result.maxSpeed, result.maxAccel, result.maxPrimal,
+        std::printf("%d,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6g,%.6g,%.6g,%.6g,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d\n",
+                    result.scenario, result.name, result.maxX, result.minX,
+                    result.maxAbsY,
+                    result.maxSpeed, result.maxAccel,
+                    result.maxHorizontalAccel,
+                    result.maxEquivalentTiltDeg,
+                    result.maxFigureEightConeViolation,
+                    result.maxPrimal,
                     result.maxDual, result.maxPlannedStateViolation,
                     result.maxPlannedInputViolation, result.solveP50Us,
                     result.solveP95Us, result.solveP99Us, result.solveMaxUs,
@@ -136,11 +163,20 @@ int main()
     const Result& baseline = results[2];
     const Result& corridor = results[3];
     const Result& reduced = results[4];
+    const Result& figureEightSoc = results[5];
+    const Result& figureEightBox = results[6];
     bool ok = true;
     ok = ok && wall.maxX <= 1.01f;
     ok = ok && baseline.maxX > wall.maxX + 0.001f;
     ok = ok && corridor.maxAbsY <= 0.36f;
     ok = ok && reduced.maxAccel <= 1.501f;
+    ok = ok && figureEightSoc.maxX > 1.3f;
+    ok = ok && figureEightSoc.minX < -1.3f;
+    ok = ok && figureEightSoc.maxAbsY > 0.5f;
+    ok = ok && figureEightSoc.maxEquivalentTiltDeg <= 15.001f;
+    ok = ok && figureEightSoc.maxFigureEightConeViolation <= 1.0e-4f;
+    ok = ok && figureEightBox.maxEquivalentTiltDeg > 15.5f;
+    ok = ok && figureEightBox.maxFigureEightConeViolation > 0.05f;
     for (const Result& result : results) {
         ok = ok && result.fallbacks == 0;
         ok = ok && result.maxPlannedStateViolation <= 1.0e-5f;

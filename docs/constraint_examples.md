@@ -51,30 +51,61 @@ near corridor wall.
 This is the first degradation example. It constrains the plan to known reduced
 authority instead of computing an aggressive command and clipping it later.
 
+### Three-dimensional figure-eight with tilt/thrust cone (`5`)
+
+- Reference: a six-second Gerono figure-eight with `x` amplitude `1.5 m`, `y`
+  amplitude `0.70 m`, and altitude varying from `0.60` to `0.75 m` above the
+  engagement origin.
+- Engagement: a bounded absolute climb ramp is followed by a two-second smooth
+  blend into the moving reference. The path activates after reaching the
+  relative altitude or after a bounded four-second takeoff window, avoiding a
+  dependency on PX4 local-origin reset offsets.
+- State envelope: `x ±1.8 m`, `y ±1.0 m`, NED `z ∈ [-1.5,+0.25] m`, horizontal
+  velocity `±2.2 m/s`, and vertical velocity `±1.0 m/s`.
+- Internal input: `[a_x, a_y, T_z, yaw_rate]`, where `T_z = g - a_z` is positive
+  upward vertical specific thrust.
+- Coupled constraint at every input knot:
+  `sqrt(a_x^2 + a_y^2) <= tan(15 deg) T_z`.
+- Input envelope: `a_x/a_y ±4 m/s²`, `T_z ∈ [0,g+3] m/s²`, and yaw rate
+  `±1 rad/s`. The box and cone share one feasible ADMM slack trajectory.
+
+The matched `figure_eight_box` case (`6`) uses the same model, costs, reference,
+state envelope, input envelope, takeoff, and blend, but removes the cone. No
+wind, impulse, or other external disturbance is applied to either case. In the
+current deterministic run, both complete both lobes. The SOC case stays at
+`15.000 deg` equivalent tilt with zero cone violation and zero fallbacks; the
+box-only case reaches `15.969 deg` and violates the cone metric by
+`0.177 m/s²`.
+
 ## Constraint semantics
 
-The bounds are TinyMPC ADMM projection constraints, not output-only clamps.
-They apply to future state columns `1..N-1` and all input columns. Horizon
-column zero is fixed to the measurement and deliberately has broad bounds; a
-measured violation can therefore enter a recovery solve rather than making
-the problem infeasible immediately.
+The boxes and cone are TinyMPC ADMM projection constraints, not output-only
+clamps. They apply to future state columns `1..N-1` and all input columns.
+Horizon column zero is fixed to the measurement and deliberately has broad
+bounds; a measured violation can therefore enter a recovery solve rather than
+making the problem infeasible immediately.
 
-The current implementation uses axis-aligned boxes. A tilt/thrust envelope is
-not exactly a per-axis acceleration box. Input second-order-cone constraints,
-model uncertainty margins, and a terminal recoverability set are appropriate
-follow-on work before physical geofence claims.
+For the SOC scenario, input boxes and the cone are projected into one shared
+input slack. This avoids returning a box-feasible trajectory that disagrees
+with a separate cone-feasible trajectory. The wrapper independently verifies
+both the complete projected input trajectory and state trajectory before
+publishing the first command. Model uncertainty margins and a terminal
+recoverability set remain appropriate follow-on work before physical safety
+claims.
 
 ## Fixed-budget solve and fallback
 
-The controller has a 50-iteration budget at 50 Hz:
+The box scenarios have a 50-iteration budget at 50 Hz; the SOC scenario
+currently reserves up to 100 iterations:
 
 1. A converged, finite, box-feasible solution is published with policy `1`.
 2. If the iteration budget expires, TinyMPC's finite projected iterate is used
    as policy `2`; primal/dual residuals remain visible and distinguish it from
    convergence.
-3. A non-finite, malformed, or non-box-feasible solution triggers policy `-1`.
-   Acceleration is set to zero (hover semantics at the PX4 acceleration
-   interface) and the last plan is retained for guidance mode.
+3. A non-finite, malformed, or constraint-infeasible solution triggers policy
+   `-1`. Box scenarios command zero acceleration (hover semantics at the PX4
+   acceleration interface). The SOC figure-eight uses a bounded, cone-feasible
+   return-to-hover command based on position and velocity error.
 4. Invalid state/setup input returns policy `-2`.
 
 This is a bounded best-known policy, not a claim that a max-iteration solution
@@ -91,7 +122,7 @@ satisfies the dynamics equality to arbitrary precision.
 | 2 | maximum primal residual |
 | 3 | maximum dual residual |
 | 4 | maximum projected state-box violation |
-| 5 | maximum projected input-box violation |
+| 5 | maximum projected input-box/cone violation |
 | 6 | cumulative fallback count |
 | 7 | cumulative solve count |
 
