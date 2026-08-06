@@ -171,6 +171,8 @@ int main()
         return 1;
     }
     const Result results[] = {
+        runScenario(TINY_MPC_FULL_STATE_HOVER,
+                    "hover_integration_reference"),
         runScenario(TINY_MPC_FULL_STATE_ACTUATOR_WALL,
                     "predictive_envelope"),
         runScenario(TINY_MPC_FULL_STATE_REACTIVE_BASELINE,
@@ -194,10 +196,17 @@ int main()
                     result.bestEffort, result.fallbacks);
     }
 
-    const Result& envelope = results[0];
-    const Result& baseline = results[1];
-    const Result& degraded = results[2];
+    const Result& hover = results[0];
+    const Result& envelope = results[1];
+    const Result& baseline = results[2];
+    const Result& degraded = results[3];
     bool ok = true;
+    ok = ok && std::fabs(hover.maxX) <= 1.0e-6f;
+    ok = ok && std::fabs(hover.finalX) <= 1.0e-6f;
+    ok = ok && std::fabs(hover.minimumMotor -
+                         static_cast<float>(tinympc_full_state_model::kHoverCommand)) <= 1.0e-6f;
+    ok = ok && std::fabs(hover.maximumMotor -
+                         static_cast<float>(tinympc_full_state_model::kHoverCommand)) <= 1.0e-6f;
     ok = ok && envelope.maxX <= 0.870f;
     ok = ok && baseline.maxX > envelope.maxX + 0.005f;
     ok = ok && envelope.maxAttitudeCoordinate <= 0.185f;

@@ -41,7 +41,10 @@ enum TinyMpcDiagnosticIndex {
 enum TinyMpcFullStateScenario {
     TINY_MPC_FULL_STATE_ACTUATOR_WALL = 0,
     TINY_MPC_FULL_STATE_DEGRADED_ACTUATOR_WALL = 1,
-    TINY_MPC_FULL_STATE_REACTIVE_BASELINE = 2
+    TINY_MPC_FULL_STATE_REACTIVE_BASELINE = 2,
+    /* Zero engagement-relative reference used to validate the complete
+     * PX4 state -> TinyMPC -> control allocator path before translation. */
+    TINY_MPC_FULL_STATE_HOVER = 3
 };
 
 void MPC_Init(void);

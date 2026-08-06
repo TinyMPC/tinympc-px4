@@ -81,11 +81,13 @@ bool finite(const AugmentedState& x)
 
 int sanitizeFullScenario(int scenario)
 {
-    if (scenario < TINY_MPC_FULL_STATE_ACTUATOR_WALL ||
-        scenario > TINY_MPC_FULL_STATE_REACTIVE_BASELINE) {
-        return TINY_MPC_FULL_STATE_ACTUATOR_WALL;
+    if (scenario == TINY_MPC_FULL_STATE_ACTUATOR_WALL ||
+        scenario == TINY_MPC_FULL_STATE_DEGRADED_ACTUATOR_WALL ||
+        scenario == TINY_MPC_FULL_STATE_REACTIVE_BASELINE ||
+        scenario == TINY_MPC_FULL_STATE_HOVER) {
+        return scenario;
     }
-    return scenario;
+    return TINY_MPC_FULL_STATE_HOVER;
 }
 
 void resetFullWarmStart()
@@ -134,7 +136,9 @@ void configureFullScenario(int scenario,
     /* Intentionally place the requested target beyond the virtual wall. The
      * constrained modes must settle at the closest feasible point; the
      * reactive baseline tracks the unsafe request. */
-    reference(0) = 0.95;
+    if (scenario != TINY_MPC_FULL_STATE_HOVER) {
+        reference(0) = 0.95;
+    }
 
     stateLower.setConstant(-kUnbounded);
     stateUpper.setConstant(kUnbounded);
@@ -230,8 +234,10 @@ MotorVector safeReturnTowardHover()
 {
     MotorVector nextDelta;
     for (int i = 0; i < kMotorCount; ++i) {
-        nextDelta(i) = g_motor_delta(i) +
-            std::clamp(-g_motor_delta(i), -kSlewPerSample, kSlewPerSample);
+        const tinytype requested = -g_motor_delta(i);
+        const tinytype bounded = std::max(-kSlewPerSample,
+                                          std::min(kSlewPerSample, requested));
+        nextDelta(i) = g_motor_delta(i) + bounded;
     }
     g_motor_delta = nextDelta;
     return MotorVector::Constant(kHoverCommand) + g_motor_delta;

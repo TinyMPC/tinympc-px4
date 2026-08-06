@@ -14,13 +14,14 @@ The repository supports two intentionally separate control boundaries:
   retains acceleration-to-attitude conversion, attitude/rate control, control
   allocation, and safety handling.
 
-There is also a **native-only experimental full-state path** built from the
+There is also an **experimental SITL-only full-state path** built from the
 supplied 50 Hz hover-linearized `A/B` matrices. It makes normalized motor
-commands and motor slew part of the MPC state/control problem, allowing one
-horizon to enforce position, attitude, body-rate, motor-authority, and slew
-limits together. It is deliberately not connected to the PX4 actuator output:
-the matrix airframe, motor order, command scaling, and local attitude-error
-conversion still need target validation.
+commands and motor slew part of the MPC problem, allowing one horizon to
+enforce position, attitude, body-rate, motor-authority, and slew limits
+together. It closes the Gazebo loop at PX4's torque/thrust control-allocation
+boundary while retaining commander, arming, failsafes, allocation, and output
+limiting. The build refuses flight targets: the matrix input scaling and target
+airframe still require identification and hardware validation.
 
 > [!CAUTION]
 > This is an experimental research prototype, not a flight-certified
@@ -44,8 +45,14 @@ PX4 EKF state -> TinyMPC ----------------------> PX4 position/velocity control
                                                control allocation -> motors
 ```
 
-The state is `[x y z roll pitch yaw vx vy vz p q r]` in PX4's local NED
-frame. TinyMPC uses a 25-knot, 0.5 s horizon and returns
+This diagram shows the trajectory/acceleration API. The separate full-state
+SITL path branches directly from the EKF state through TinyMPC to PX4
+torque/thrust setpoints, bypassing the position/attitude/rate controllers but
+rejoining at control allocation.
+
+For the trajectory/acceleration API, the state is
+`[x y z roll pitch yaw vx vy vz p q r]` in PX4's local NED frame. TinyMPC uses
+a 25-knot, 0.5 s horizon and returns
 `[ax ay az yawspeed]`. In direct mode, zero vertical acceleration means hover
 at PX4's acceleration interface; PX4 adds gravity compensation and converts
 the acceleration vector to attitude and collective thrust.
@@ -84,7 +91,7 @@ gate.
 
 ## Current validation status
 
-The following checks were run on August 1, 2026 with PX4 v1.15.3 and
+The following checks were run on August 6, 2026 with PX4 v1.15.3 and
 MATLAB/Simulink R2026a:
 
 - native C++ smoke test and all deterministic constraint assertions;
@@ -92,6 +99,14 @@ MATLAB/Simulink R2026a:
 - full PX4 SITL firmware compilation including TinyMPC source;
 - SIH flight in direct acceleration mode: acceleration-only heartbeat,
   `nav_state=14` (Offboard), no PX4 failsafe, and normal landing.
+- full-state X500 Gazebo hover at the PX4 torque/thrust allocation boundary:
+  24.5 simulated seconds in Offboard, 0 failsafes, failure-detector status 0,
+  0 unachieved allocator setpoints, 0 motor saturations, 0.175 m maximum and
+  0.100 m final engagement-relative displacement, and normal landing/disarm;
+- active requested-to-allocated motor round-trip watchdog and an observed
+  425 us worst-case SITL host solve, below the 18 ms runtime deadline; and
+- MATLAB model update, Simulink code generation, and a final PX4 link with
+  both `px4_simulink_app` and `tinympc_fullstate` present.
 
 The earlier guidance-mode hover was also verified in SIH and Gazebo. In that
 test the vehicle remained in Offboard for 151 seconds and held altitude within
@@ -183,9 +198,33 @@ Run the experimental supplied-matrix motor/flight-envelope comparison:
 ./scripts/run_full_state_benchmark.sh
 ```
 
-This is a native model-in-the-loop experiment, not a PX4 motor-output build.
-Its desktop p50/p95/p99 timing is only a regression measurement; it does not
+The same API is now available in the SITL-only PX4 module below. Native
+p50/p95/p99 timing remains only a regression measurement; it does not
 establish the 20 ms deadline on a flight-controller MCU.
+
+### Experimental full-state PX4/Gazebo hover
+
+Builds include the external `tinympc_fullstate` module automatically. Start
+X500 Gazebo as described below, wait for `Ready for takeoff!`, then run:
+
+```text
+tinympc_fullstate start hover 1.0
+tinympc_fullstate status
+commander takeoff
+# Let stock PX4 settle in Loiter before the explicit handoff.
+commander mode offboard
+tinympc_fullstate status
+listener actuator_motors -n 1
+listener control_allocator_status -n 1
+commander land
+```
+
+This bypasses PX4's cascaded position/attitude/rate controllers, but not PX4's
+commander, estimator, failsafes, control allocator, or actuator output limits.
+The `wall` and `degraded` selections build, but only `hover` is closed-loop
+validated. The exact state transform, motor mapping, guards, test result, and
+remaining hardware gate are documented in
+[`docs/full_state_actuator_constraints.md`](docs/full_state_actuator_constraints.md).
 
 ## Generate the PX4 app
 
@@ -327,6 +366,8 @@ The next research steps and fair comparison protocol are in
   trajectory-setpoint writer.
 - `quadtest/wrapper/`: C API, constraints, diagnostics, native smoke test, and
   deterministic benchmarks, including the opt-in full-state/motor experiment.
+- `px4_external/`: SITL-only full-state module at PX4's torque/thrust control-
+  allocation boundary.
 - `quadtest/tinympc/TinyMPC/`: vendored TinyMPC source used by native tests and
   the generated PX4 app.
 - `quadtest/setup_tinympc_px4.m`: deterministic model and custom-code setup.
