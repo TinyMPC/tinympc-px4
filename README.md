@@ -72,6 +72,7 @@ state does not make the problem infeasible by definition.
 | `reduced_authority` | Move 1 m forward while horizontal acceleration is limited to ±0.75 m/s², vertical acceleration to ±1.5 m/s², and yaw rate to ±0.5 rad/s | Replanning with degraded control authority |
 | `figure_eight_soc` | Fly a smooth 3D figure-eight while enforcing `sqrt(ax²+ay²) <= tan(15°) Tz` and a thrust/input envelope at every horizon knot | Joint trajectory and coupled tilt/thrust planning without an external disturbance |
 | `figure_eight_box` | Same model, reference, costs, and boxes with only the cone removed | Matched intrinsic baseline for the SOC constraint |
+| `chicane_soc` | Two sharp turns through a 0.36 m center-position corridor with the same 15° cone | Horizon-aware constrained planning versus stock PX4 cascaded position/velocity control, without an external disturbance |
 
 The native benchmark also includes `wall_baseline`, which uses the same model,
 reference, input limits, and 0.9 m/s disturbance without the wall constraint.
@@ -107,6 +108,9 @@ MATLAB/Simulink R2026a:
   425 us worst-case SITL host solve, below the 18 ms runtime deadline; and
 - MATLAB model update, Simulink code generation, and a final PX4 link with
   both `px4_simulink_app` and `tinympc_fullstate` present.
+- matched no-wind X500 chicane runs through the same PX4 inner loops: TinyMPC
+  remained inside the corridor with 1,095 consecutive solves and a 1.068 ms
+  worst host solve, while stock PX4 cascaded control cut 0.249 m outside.
 
 The earlier guidance-mode hover was also verified in SIH and Gazebo. In that
 test the vehicle remained in Offboard for 151 seconds and held altitude within
@@ -122,6 +126,12 @@ Gazebo recordings of the direct-acceleration maneuvers are also included:
 - [reduced authority](media/tinympc_reduced_authority_gazebo.mp4); and
 - [no-wind SOC figure-eight](media/tinympc_figure_eight_soc_gazebo.mp4), flown
   through four visual trajectory arches.
+
+The [matched chicane telemetry replay](media/tinympc_chicane_px4_sitl_comparison.mp4)
+uses actual PX4 SITL ULogs and shows TinyMPC beside stock PX4 on the same
+no-wind course. The exact controller boundaries, quantitative results, and
+reproduction steps are in
+[`docs/chicane_px4_comparison.md`](docs/chicane_px4_comparison.md).
 
 The corridor scene geometry is included at
 [`quadtest/gazebo/tinympc_corridor.sdf`](quadtest/gazebo/tinympc_corridor.sdf).
@@ -332,6 +342,7 @@ Spawn the visible geometry into the running `default` world before arming:
 ```bash
 ./scripts/spawn_gazebo_course.sh figure_eight
 # or: ./scripts/spawn_gazebo_course.sh corridor
+# or: ./scripts/spawn_gazebo_course.sh chicane
 ```
 
 The figure-eight course uses visual trajectory gates without collision geometry

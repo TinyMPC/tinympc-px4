@@ -15,21 +15,22 @@ TinyMPC: position/velocity feedback, trajectory constraints, acceleration plan
 PX4:     acceleration-to-attitude/thrust, attitude/rate loops, allocation, safety
 ```
 
-The repository now also contains a native-only experimental boundary:
+The repository now also contains an experimental SITL-only deeper boundary:
 
 ```text
 TinyMPC: position + local attitude + velocity + body-rate prediction
          motor magnitude + motor slew constraints -> four motor commands
-PX4:     estimation, mode/arming/failsafe handling (future integration)
+PX4:     estimation, mode/arming/failsafe handling, control allocation, motors
 ```
 
 This path is useful because the same horizon sees the virtual wall and the
 actuator/attitude envelope. Stock PX4 has individual position/trajectory
 limits, cascaded attitude/rate loops, and constrained control allocation, but
 does not normally optimize all of those future constraints in one MPC
-problem. The checked-in version is intentionally not wired to actuators until
-the supplied model, motor order/scaling, and attitude-error conversion are
-validated on the target airframe.
+problem. The checked-in X500 integration converts the four planned
+motor-equivalent commands to a torque/thrust request and rejoins PX4 at control
+allocation. It is intentionally restricted to SITL until the supplied model
+and scaling are identified on a target airframe.
 
 Guidance mode remains valuable as a conservative integration baseline, but it
 does not isolate TinyMPC constraint enforcement because PX4's position loop can
@@ -55,6 +56,11 @@ Track through a narrow corridor under a crosswind or lateral impulse. Box
 constraints cover an axis-aligned corridor; linear half-spaces can later model
 rotated walls. A moving obstacle example should use time-varying constraints
 and a stated fallback if the horizon becomes infeasible.
+
+The checked-in no-wind chicane is now the matched intrinsic demonstration: the
+same X500, estimator, 15-degree tilt limit, inner loops, allocation, and sharp
+reference are used for TinyMPC and stock PX4. TinyMPC remains inside the
+0.36 m corridor; stock cascaded control cuts approximately 0.249 m outside.
 
 ### 3. Reduced thrust or actuator authority
 

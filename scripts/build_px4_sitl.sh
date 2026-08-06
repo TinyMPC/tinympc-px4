@@ -42,4 +42,4 @@ EXTERNAL_MODULES_LOCATION="${repo_root}/px4_external" \
 echo
 echo "PX4 SITL build complete:"
 echo "  ${px4_dir}/build/${target}/bin/px4"
-echo "  includes SITL-only tinympc_fullstate external module"
+echo "  includes SITL-only tinympc_fullstate and tinympc_chicane external modules"

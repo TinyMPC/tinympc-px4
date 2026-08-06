@@ -12,7 +12,8 @@ enum TinyMpcScenario {
     TINY_MPC_SCENARIO_REDUCED_AUTHORITY = 3,
     TINY_MPC_SCENARIO_WALL_UNCONSTRAINED = 4,
     TINY_MPC_SCENARIO_FIGURE_EIGHT_SOC = 5,
-    TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX = 6
+    TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX = 6,
+    TINY_MPC_SCENARIO_CHICANE_SOC = 7
 };
 
 enum TinyMpcSolvePolicy {
@@ -87,9 +88,10 @@ void MPC_Step_Scenario(const float x[12],
  * This makes both absolute motor authority and inter-sample slew hard box
  * constraints over the prediction horizon.
  *
- * IMPORTANT: this API is intentionally not connected to the PX4 output
- * model yet. Motor order/scaling and the identified airframe must be
- * validated on the target before flight use. */
+ * The SITL-only tinympc_fullstate module maps these commands to an X500
+ * torque/thrust request and rejoins PX4 at control allocation. Motor
+ * order/scaling and the identified airframe must still be validated on a
+ * hardware target before flight use. */
 void MPC_FullState_Init(void);
 void MPC_FullState_Reset(void);
 void MPC_FullState_Step(const float x[12],

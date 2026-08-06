@@ -1,4 +1,5 @@
 #include "tinympc_interface.h"
+#include "tinympc_chicane_course.hpp"
 
 #include <algorithm>
 #include <array>
@@ -24,6 +25,8 @@ struct Result {
     float maxHorizontalAccel;
     float maxEquivalentTiltDeg;
     float maxFigureEightConeViolation;
+    float maxChicaneCorridorViolation;
+    float finalChicanePositionError;
     float maxPrimal;
     float maxDual;
     float maxPlannedStateViolation;
@@ -58,7 +61,7 @@ Result runScenario(int scenario, const char* name)
 
     MPC_Reset();
     Result result{scenario, name, x[0], x[0], 0.0f, 0.0f, 0.0f, 0.0f,
-                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                   0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0};
     std::array<double, kSteps> solveTimesUs{};
 
@@ -101,6 +104,11 @@ Result runScenario(int scenario, const char* name)
             std::max(0.0f,
                      horizontalAccel -
                      kFigureEightConeSlope * verticalSpecificThrust));
+        if (scenario == TINY_MPC_SCENARIO_CHICANE_SOC) {
+            result.maxChicaneCorridorViolation = std::max(
+                result.maxChicaneCorridorViolation,
+                static_cast<float>(tinympc_chicane::corridorViolation(x[0], x[1])));
+        }
         result.maxPrimal = std::max(result.maxPrimal,
                                     diagnostics[TINY_MPC_DIAG_PRIMAL_RESIDUAL]);
         result.maxDual = std::max(result.maxDual,
@@ -124,6 +132,106 @@ Result runScenario(int scenario, const char* name)
     result.solveP99Us = solveTimesUs[kSteps * 99 / 100];
     result.solveMaxUs = solveTimesUs.back();
     result.fallbacks = static_cast<int>(diagnostics[TINY_MPC_DIAG_FALLBACK_COUNT]);
+    if (scenario == TINY_MPC_SCENARIO_CHICANE_SOC) {
+        result.finalChicanePositionError = std::hypot(
+            x[0] - static_cast<float>(tinympc_chicane::kFinishX),
+            x[1] - static_cast<float>(tinympc_chicane::kSecondCornerY));
+    }
+    return result;
+}
+
+Result runPx4CascadedPidChicane()
+{
+    constexpr float kPositionP = 0.95f;
+    constexpr float kVelocityP = 1.8f;
+    constexpr float kVelocityI = 0.4f;
+    constexpr float kVelocityD = 0.2f;
+    constexpr float kHorizontalVelocityLimit = 12.0f;
+    constexpr float kHorizontalAccelerationLimit =
+        kFigureEightConeSlope * kGravity;
+
+    float x[12] = {0.0f};
+    float u[4] = {0.0f};
+    float velocityIntegral[2] = {0.0f, 0.0f};
+    float measuredAcceleration[2] = {0.0f, 0.0f};
+    Result result{-1, "px4_cascaded_pid_chicane", x[0], x[0], 0.0f,
+                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                  0.0f, 0.0f, 0.0f, 0.0f, 0.0, 0.0, 0.0, 0.0,
+                  0, 0, 0, 0};
+
+    for (int step = 0; step < kSteps; ++step) {
+        const tinympc_chicane::Sample reference =
+            tinympc_chicane::sample(step * kDt);
+        float velocitySetpoint[2] = {
+            static_cast<float>(reference.vx) +
+                kPositionP * (static_cast<float>(reference.x) - x[0]),
+            static_cast<float>(reference.vy) +
+                kPositionP * (static_cast<float>(reference.y) - x[1])
+        };
+        const float velocitySetpointNorm = std::hypot(
+            velocitySetpoint[0], velocitySetpoint[1]);
+        if (velocitySetpointNorm > kHorizontalVelocityLimit) {
+            const float scale = kHorizontalVelocityLimit / velocitySetpointNorm;
+            velocitySetpoint[0] *= scale;
+            velocitySetpoint[1] *= scale;
+        }
+
+        float velocityError[2] = {
+            velocitySetpoint[0] - x[6],
+            velocitySetpoint[1] - x[7]
+        };
+        float requestedAcceleration[2] = {
+            kVelocityP * velocityError[0] + velocityIntegral[0] -
+                kVelocityD * measuredAcceleration[0],
+            kVelocityP * velocityError[1] + velocityIntegral[1] -
+                kVelocityD * measuredAcceleration[1]
+        };
+        u[0] = requestedAcceleration[0];
+        u[1] = requestedAcceleration[1];
+        const float requestedNorm = std::hypot(u[0], u[1]);
+        if (requestedNorm > kHorizontalAccelerationLimit) {
+            const float scale = kHorizontalAccelerationLimit / requestedNorm;
+            u[0] *= scale;
+            u[1] *= scale;
+        }
+
+        // PX4-style tracking anti-windup: unwind the velocity integrator in
+        // the direction removed by the downstream tilt/thrust saturation.
+        const float antiResetWindupGain = 2.0f / kVelocityP;
+        velocityError[0] -= antiResetWindupGain *
+            (requestedAcceleration[0] - u[0]);
+        velocityError[1] -= antiResetWindupGain *
+            (requestedAcceleration[1] - u[1]);
+        velocityIntegral[0] += kVelocityI * velocityError[0] * kDt;
+        velocityIntegral[1] += kVelocityI * velocityError[1] * kDt;
+        measuredAcceleration[0] = u[0];
+        measuredAcceleration[1] = u[1];
+        integrate(x, u);
+
+        result.maxX = std::max(result.maxX, x[0]);
+        result.minX = std::min(result.minX, x[0]);
+        result.maxAbsY = std::max(result.maxAbsY, std::fabs(x[1]));
+        result.maxSpeed = std::max(result.maxSpeed, std::hypot(x[6], x[7]));
+        const float horizontalAcceleration = std::hypot(u[0], u[1]);
+        result.maxAccel = std::max(result.maxAccel, horizontalAcceleration);
+        result.maxHorizontalAccel = std::max(
+            result.maxHorizontalAccel, horizontalAcceleration);
+        result.maxEquivalentTiltDeg = std::max(
+            result.maxEquivalentTiltDeg,
+            std::atan2(horizontalAcceleration, kGravity) *
+                180.0f / 3.14159265358979323846f);
+        result.maxFigureEightConeViolation = std::max(
+            result.maxFigureEightConeViolation,
+            std::max(0.0f, horizontalAcceleration -
+                     kFigureEightConeSlope * kGravity));
+        result.maxChicaneCorridorViolation = std::max(
+            result.maxChicaneCorridorViolation,
+            static_cast<float>(tinympc_chicane::corridorViolation(x[0], x[1])));
+    }
+
+    result.finalChicanePositionError = std::hypot(
+        x[0] - static_cast<float>(tinympc_chicane::kFinishX),
+        x[1] - static_cast<float>(tinympc_chicane::kSecondCornerY));
     return result;
 }
 
@@ -139,18 +247,22 @@ int main()
         runScenario(TINY_MPC_SCENARIO_CORRIDOR, "corridor"),
         runScenario(TINY_MPC_SCENARIO_REDUCED_AUTHORITY, "reduced_authority"),
         runScenario(TINY_MPC_SCENARIO_FIGURE_EIGHT_SOC, "figure_eight_soc"),
-        runScenario(TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX, "figure_eight_box")
+        runScenario(TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX, "figure_eight_box"),
+        runScenario(TINY_MPC_SCENARIO_CHICANE_SOC, "chicane_soc"),
+        runPx4CascadedPidChicane()
     };
 
-    std::puts("scenario,name,max_x,min_x,max_abs_y,max_speed,max_accel,max_horizontal_accel,max_equivalent_tilt_deg,max_figure_eight_cone_violation,max_primal,max_dual,max_planned_state_violation,max_planned_input_violation,solve_p50_us,solve_p95_us,solve_p99_us,solve_max_us,max_iterations,converged,best_effort,fallbacks");
+    std::puts("scenario,name,max_x,min_x,max_abs_y,max_speed,max_accel,max_horizontal_accel,max_equivalent_tilt_deg,max_figure_eight_cone_violation,max_chicane_corridor_violation,final_chicane_position_error,max_primal,max_dual,max_planned_state_violation,max_planned_input_violation,solve_p50_us,solve_p95_us,solve_p99_us,solve_max_us,max_iterations,converged,best_effort,fallbacks");
     for (const Result& result : results) {
-        std::printf("%d,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6g,%.6g,%.6g,%.6g,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d\n",
+        std::printf("%d,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6g,%.6g,%.6g,%.6g,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d\n",
                     result.scenario, result.name, result.maxX, result.minX,
                     result.maxAbsY,
                     result.maxSpeed, result.maxAccel,
                     result.maxHorizontalAccel,
                     result.maxEquivalentTiltDeg,
                     result.maxFigureEightConeViolation,
+                    result.maxChicaneCorridorViolation,
+                    result.finalChicanePositionError,
                     result.maxPrimal,
                     result.maxDual, result.maxPlannedStateViolation,
                     result.maxPlannedInputViolation, result.solveP50Us,
@@ -165,6 +277,8 @@ int main()
     const Result& reduced = results[4];
     const Result& figureEightSoc = results[5];
     const Result& figureEightBox = results[6];
+    const Result& chicaneSoc = results[7];
+    const Result& cascadedPid = results[8];
     bool ok = true;
     ok = ok && wall.maxX <= 1.01f;
     ok = ok && baseline.maxX > wall.maxX + 0.001f;
@@ -177,6 +291,12 @@ int main()
     ok = ok && figureEightSoc.maxFigureEightConeViolation <= 1.0e-4f;
     ok = ok && figureEightBox.maxEquivalentTiltDeg > 15.5f;
     ok = ok && figureEightBox.maxFigureEightConeViolation > 0.05f;
+    ok = ok && chicaneSoc.maxEquivalentTiltDeg <= 15.001f;
+    ok = ok && cascadedPid.maxEquivalentTiltDeg <= 15.001f;
+    ok = ok && chicaneSoc.maxChicaneCorridorViolation <= 1.0e-5f;
+    ok = ok && cascadedPid.maxChicaneCorridorViolation > 0.15f;
+    ok = ok && chicaneSoc.finalChicanePositionError < 0.03f;
+    ok = ok && cascadedPid.finalChicanePositionError < 0.03f;
     for (const Result& result : results) {
         ok = ok && result.fallbacks == 0;
         ok = ok && result.maxPlannedStateViolation <= 1.0e-5f;

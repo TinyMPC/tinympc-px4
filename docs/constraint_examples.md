@@ -77,6 +77,26 @@ current deterministic run, both complete both lobes. The SOC case stays at
 box-only case reaches `15.969 deg` and violates the cone metric by
 `0.177 m/s²`.
 
+### No-wind chicane with tilt/thrust cone (`7`)
+
+- Reference: two alternating 90-degree turns from `(0,0)` through `(1.5,0)`
+  and `(1.5,1)` to `(3,1) m` in 4.4 seconds.
+- Corridor: union of three axis-aligned rectangles with 0.18 m center-position
+  half-width.
+- State envelope: horizontal velocity `±1.5 m/s`, vertical velocity
+  `±0.5 m/s`, and altitude `±0.40 m` around engagement.
+- Coupled input: the same 15-degree specific-thrust cone as scenario `5`.
+- Constraint handoff: 0.30 seconds inside the geometric corner overlap so PX4
+  inner-loop lag does not create an artificial one-sample infeasibility.
+
+The native matched baseline implements PX4 v1.15 default horizontal position
+P and velocity PID equations, velocity limiting, tilt limiting, and tracking
+anti-windup on the same ideal double-integrator. TinyMPC has zero corridor
+violation and 2.5 mm final error; the cascaded baseline cuts 0.231 m outside
+before settling to 10.6 mm final error. Both remain within the common 15-degree
+limit and receive no external disturbance. The full PX4/Gazebo comparison is
+documented in [`chicane_px4_comparison.md`](chicane_px4_comparison.md).
+
 ## Constraint semantics
 
 The boxes and cone are TinyMPC ADMM projection constraints, not output-only

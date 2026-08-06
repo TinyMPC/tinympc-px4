@@ -1,4 +1,5 @@
 #include "tinympc_interface.h"
+#include "tinympc_chicane_course.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -40,6 +41,7 @@ unsigned long g_fallback_count = 0;
 tinytype g_figure_time = 0.0;
 tinytype g_figure_takeoff_time = 0.0;
 int g_figure_altitude_hold_steps = 0;
+tinytype g_chicane_time = 0.0;
 
 typedef Matrix<tinytype, kNumStates, 1> StateVector;
 typedef Matrix<tinytype, kNumInputs, 1> InputVector;
@@ -180,7 +182,7 @@ void resetWarmStart(TinySolver* solver)
 int sanitizeScenario(int scenario)
 {
     if (scenario < TINY_MPC_SCENARIO_HOVER ||
-        scenario > TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX) {
+        scenario > TINY_MPC_SCENARIO_CHICANE_SOC) {
         return TINY_MPC_SCENARIO_HOVER;
     }
     return scenario;
@@ -190,6 +192,12 @@ bool isFigureEightScenario(int scenario)
 {
     return scenario == TINY_MPC_SCENARIO_FIGURE_EIGHT_SOC ||
            scenario == TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX;
+}
+
+bool isCoupledTrajectoryScenario(int scenario)
+{
+    return isFigureEightScenario(scenario) ||
+           scenario == TINY_MPC_SCENARIO_CHICANE_SOC;
 }
 
 tinytype clampValue(tinytype value, tinytype lower, tinytype upper)
@@ -386,6 +394,56 @@ void configureFigureEight(const StateVector& x0,
     inputUpper = maximum.replicate<1, kHorizon - 1>();
 }
 
+void configureChicane(StateTrajectory& reference,
+                      StateTrajectory& stateLower,
+                      StateTrajectory& stateUpper,
+                      InputTrajectory& inputLower,
+                      InputTrajectory& inputUpper)
+{
+    stateLower.setConstant(-kUnbounded);
+    stateUpper.setConstant(kUnbounded);
+
+    for (int k = 0; k < kHorizon; ++k) {
+        const tinytype futureTime = g_chicane_time +
+            static_cast<tinytype>(k) * kSampleTime;
+        const tinympc_chicane::Sample course =
+            tinympc_chicane::sample(static_cast<double>(futureTime));
+        reference.col(k) = g_origin;
+        reference(0, k) += course.x;
+        reference(1, k) += course.y;
+        reference(6, k) = course.vx;
+        reference(7, k) = course.vy;
+        reference(8, k) = 0.0;
+        reference(9, k) = 0.0;
+        reference(10, k) = 0.0;
+        reference(11, k) = 0.0;
+
+        if (k > 0) {
+            const tinympc_chicane::Bounds bounds =
+                tinympc_chicane::planningBounds(
+                    static_cast<double>(futureTime));
+            stateLower(0, k) = g_origin(0) + bounds.xMinimum;
+            stateUpper(0, k) = g_origin(0) + bounds.xMaximum;
+            stateLower(1, k) = g_origin(1) + bounds.yMinimum;
+            stateUpper(1, k) = g_origin(1) + bounds.yMaximum;
+        }
+    }
+
+    setStateBox(stateLower, stateUpper, 2,
+                g_origin(2) - 0.40, g_origin(2) + 0.40);
+    setStateBox(stateLower, stateUpper, 6, -1.5, 1.5);
+    setStateBox(stateLower, stateUpper, 7, -1.5, 1.5);
+    setStateBox(stateLower, stateUpper, 8, -0.5, 0.5);
+
+    InputVector minimum;
+    InputVector maximum;
+    minimum << -4.0, -4.0, 0.0, -kDefaultYawRateLimit;
+    maximum << 4.0, 4.0, kGravity + 3.0, kDefaultYawRateLimit;
+    inputLower = minimum.replicate<1, kHorizon - 1>();
+    inputUpper = maximum.replicate<1, kHorizon - 1>();
+    g_chicane_time += kSampleTime;
+}
+
 tinytype maximumInputConeViolation(const tinyMatrix& input)
 {
     tinytype maximum = 0.0;
@@ -408,6 +466,28 @@ InputVector figureEightFallback(const StateVector& state)
     const tinytype verticalAcceleration = clampValue(
         -1.0 * (state(2) - targetZ) - 1.5 * state(8), -1.5, 1.5);
     fallback(2) = kGravity - verticalAcceleration;
+
+    const tinytype lateralNorm = fallback.head<2>().norm();
+    const tinytype lateralLimit = kFigureEightConeSlope * fallback(2);
+    if (lateralNorm > lateralLimit && lateralNorm > 0.0) {
+        fallback.head<2>() *= lateralLimit / lateralNorm;
+    }
+    return fallback;
+}
+
+InputVector chicaneFallback(const StateVector& state)
+{
+    const tinympc_chicane::Sample course =
+        tinympc_chicane::sample(static_cast<double>(g_chicane_time));
+    InputVector fallback = InputVector::Zero();
+    fallback(0) = clampValue(
+        -1.0 * (state(0) - (g_origin(0) + course.x)) - 1.5 * state(6),
+        -1.5, 1.5);
+    fallback(1) = clampValue(
+        -1.0 * (state(1) - (g_origin(1) + course.y)) - 1.5 * state(7),
+        -1.5, 1.5);
+    fallback(2) = kGravity + clampValue(
+        1.0 * (state(2) - g_origin(2)) + 1.5 * state(8), -1.5, 1.5);
 
     const tinytype lateralNorm = fallback.head<2>().norm();
     const tinytype lateralLimit = kFigureEightConeSlope * fallback(2);
@@ -636,6 +716,7 @@ void MPC_Reset(void)
     g_figure_time = 0.0;
     g_figure_takeoff_time = 0.0;
     g_figure_altitude_hold_steps = 0;
+    g_chicane_time = 0.0;
     g_origin.setZero();
     g_last_plan.setZero();
     g_last_input.setZero();
@@ -657,15 +738,15 @@ void MPC_Step_Scenario(const float x[12],
 
     const StateVector x0 = copyState(x);
     scenario = sanitizeScenario(scenario);
-    TinySolver* selectedSolver = isFigureEightScenario(scenario)
+    TinySolver* selectedSolver = isCoupledTrajectoryScenario(scenario)
         ? g_figure_solver : g_solver;
     if (selectedSolver == nullptr || !stateIsFinite(x0)) {
         InputVector safeInput = InputVector::Zero();
-        if (isFigureEightScenario(scenario)) {
+        if (isCoupledTrajectoryScenario(scenario)) {
             safeInput(2) = kGravity;
         }
         const StateVector safePlan = stateIsFinite(x0) ? x0 : StateVector::Zero();
-        if (isFigureEightScenario(scenario)) {
+        if (isCoupledTrajectoryScenario(scenario)) {
             copySpecificThrustOutput(safeInput, safePlan, u, xplan);
         } else {
             copyOutput(safeInput, safePlan, u, xplan);
@@ -681,6 +762,7 @@ void MPC_Step_Scenario(const float x[12],
         g_figure_time = 0.0;
         g_figure_takeoff_time = 0.0;
         g_figure_altitude_hold_steps = 0;
+        g_chicane_time = 0.0;
         resetWarmStart(g_solver);
         resetWarmStart(g_figure_solver);
     }
@@ -694,15 +776,21 @@ void MPC_Step_Scenario(const float x[12],
         g_has_origin = true;
     }
 
-    if (isFigureEightScenario(scenario)) {
+    if (isCoupledTrajectoryScenario(scenario)) {
         StateTrajectory referenceHorizon;
         StateTrajectory stateLower;
         StateTrajectory stateUpper;
         InputTrajectory inputLower;
         InputTrajectory inputUpper;
-        configureFigureEight(x0, referenceHorizon,
+        if (scenario == TINY_MPC_SCENARIO_CHICANE_SOC) {
+            configureChicane(referenceHorizon,
                              stateLower, stateUpper,
                              inputLower, inputUpper);
+        } else {
+            configureFigureEight(x0, referenceHorizon,
+                                 stateLower, stateUpper,
+                                 inputLower, inputUpper);
+        }
 
         InputVector candidateInput;
         StateVector candidatePlan;
@@ -710,7 +798,8 @@ void MPC_Step_Scenario(const float x[12],
         tinytype stateViolation = kUnbounded;
         tinytype inputViolation = kUnbounded;
         const bool enforceCone =
-            scenario == TINY_MPC_SCENARIO_FIGURE_EIGHT_SOC;
+            scenario == TINY_MPC_SCENARIO_FIGURE_EIGHT_SOC ||
+            scenario == TINY_MPC_SCENARIO_CHICANE_SOC;
         const bool finite = solveTrajectory(g_figure_solver,
                                             x0,
                                             referenceHorizon,
@@ -740,7 +829,8 @@ void MPC_Step_Scenario(const float x[12],
             g_figure_last_plan = candidatePlan;
         } else {
             ++g_fallback_count;
-            g_figure_last_input = figureEightFallback(x0);
+            g_figure_last_input = scenario == TINY_MPC_SCENARIO_CHICANE_SOC
+                ? chicaneFallback(x0) : figureEightFallback(x0);
         }
 
         copySpecificThrustOutput(g_figure_last_input,

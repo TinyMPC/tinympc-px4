@@ -15,8 +15,12 @@ case "${course}" in
     model_name="tinympc_corridor"
     sdf_file="${repo_root}/quadtest/gazebo/tinympc_corridor.sdf"
     ;;
+  chicane|chicane_soc)
+    model_name="tinympc_chicane_course"
+    sdf_file="${repo_root}/quadtest/gazebo/tinympc_chicane_course.sdf"
+    ;;
   *)
-    echo "Unknown course '${course}'. Use figure_eight or corridor." >&2
+    echo "Unknown course '${course}'. Use figure_eight, corridor, or chicane." >&2
     exit 2
     ;;
 esac
