@@ -103,8 +103,13 @@ void update_slack(TinySolver *solver)
         solver->work->vcnew = solver->work->x + solver->work->gc;
     }
 
-    // Update second order cone slack variables for input
-    if (solver->settings->en_input_soc && solver->work->numInputCones > 0) {
+    // If cone constraints are the only input constraints, reuse the primary
+    // input slack. This keeps one ADMM consensus trajectory and makes the
+    // returned solution itself cone-feasible. A separate cone slack is only
+    // needed when input bounds are enabled at the same time.
+    const bool separate_input_soc = solver->settings->en_input_soc &&
+        solver->settings->en_input_bound && solver->work->numInputCones > 0;
+    if (separate_input_soc) {
         solver->work->zcnew = solver->work->u + solver->work->yc;
     }
 
@@ -128,8 +133,35 @@ void update_slack(TinySolver *solver)
                 int start = solver->work->Acu(k);
                 int num_us = solver->work->qcu(k);
                 tinytype mu = solver->work->cu(k);
-                tinyVector col = solver->work->zcnew.block(start, i, num_us, 1);
-                solver->work->zcnew.block(start, i, num_us, 1) = project_soc(col, mu);
+                tinyMatrix& slack = separate_input_soc
+                    ? solver->work->zcnew : solver->work->znew;
+                tinyVector col = slack.block(start, i, num_us, 1);
+                slack.block(start, i, num_us, 1) = project_soc(col, mu);
+            }
+        }
+    }
+
+    if (solver->settings->en_input_soc && !solver->settings->en_input_bound) {
+        // The primary-slack SOC mode also supports the configured input box
+        // without creating a second, potentially inconsistent consensus
+        // trajectory. Clamp first, then radially restore each cone after a
+        // cap on its axial component. Components outside a cone (for example
+        // yaw rate) retain their ordinary box projection.
+        solver->work->znew = solver->work->u_max.cwiseMin(
+            solver->work->u_min.cwiseMax(solver->work->znew));
+        for (int i=0; i<solver->work->N-1; i++) {
+            for (int k=0; k<solver->work->numInputCones; k++) {
+                const int start = solver->work->Acu(k);
+                const int num_us = solver->work->qcu(k);
+                const tinytype mu = solver->work->cu(k);
+                tinyVector cone = solver->work->znew.block(start, i, num_us, 1);
+                const tinytype radial_norm = cone.head(num_us - 1).norm();
+                const tinytype radial_limit = std::max<tinytype>(
+                    0.0, mu * cone(num_us - 1));
+                if (radial_norm > radial_limit && radial_norm > 0.0) {
+                    cone.head(num_us - 1) *= radial_limit / radial_norm;
+                }
+                solver->work->znew.block(start, i, num_us, 1) = cone;
             }
         }
     }
@@ -192,7 +224,8 @@ void update_dual(TinySolver *solver)
     }
 
     // Update second order cone dual variables for input
-    if (solver->settings->en_input_soc && solver->work->numInputCones > 0) {
+    if (solver->settings->en_input_soc && solver->settings->en_input_bound &&
+        solver->work->numInputCones > 0) {
         solver->work->yc = solver->work->yc + solver->work->u - solver->work->zcnew;
     }
     
@@ -227,7 +260,8 @@ void update_linear_cost(TinySolver *solver)
     // Update input cost terms
     solver->work->r = -(solver->work->Uref.array().colwise() * solver->work->R.array());
     (solver->work->r).noalias() -= solver->cache->rho * (solver->work->znew - solver->work->y);
-    if (solver->settings->en_input_soc && solver->work->numInputCones > 0) {
+    if (solver->settings->en_input_soc && solver->settings->en_input_bound &&
+        solver->work->numInputCones > 0) {
         (solver->work->r).noalias() -= solver->cache->rho * (solver->work->zcnew - solver->work->yc);
     }
     if (solver->settings->en_input_linear) {
@@ -258,6 +292,24 @@ bool termination_condition(TinySolver *solver)
         solver->work->dual_residual_state = ((solver->work->v - solver->work->vnew).cwiseAbs().maxCoeff()) * solver->cache->rho;
         solver->work->primal_residual_input = (solver->work->u - solver->work->znew).cwiseAbs().maxCoeff();
         solver->work->dual_residual_input = ((solver->work->z - solver->work->znew).cwiseAbs().maxCoeff()) * solver->cache->rho;
+
+        if (solver->settings->en_state_soc && solver->work->numStateCones > 0) {
+            solver->work->primal_residual_state = std::max(
+                solver->work->primal_residual_state,
+                (solver->work->x - solver->work->vcnew).cwiseAbs().maxCoeff());
+            solver->work->dual_residual_state = std::max(
+                solver->work->dual_residual_state,
+                ((solver->work->vc - solver->work->vcnew).cwiseAbs().maxCoeff()) * solver->cache->rho);
+        }
+        if (solver->settings->en_input_soc && solver->settings->en_input_bound &&
+            solver->work->numInputCones > 0) {
+            solver->work->primal_residual_input = std::max(
+                solver->work->primal_residual_input,
+                (solver->work->u - solver->work->zcnew).cwiseAbs().maxCoeff());
+            solver->work->dual_residual_input = std::max(
+                solver->work->dual_residual_input,
+                ((solver->work->zc - solver->work->zcnew).cwiseAbs().maxCoeff()) * solver->cache->rho);
+        }
 
         if (solver->work->primal_residual_state < solver->settings->abs_pri_tol &&
             solver->work->primal_residual_input < solver->settings->abs_pri_tol &&
@@ -291,15 +343,6 @@ int solve(TinySolver *solver)
     tinyMatrix v_prev = solver->work->vnew;
     tinyMatrix z_prev = solver->work->znew;
     
-    // Initialize SOC slack variables if needed
-    if (solver->settings->en_state_soc && solver->work->numStateCones > 0) {
-        solver->work->vcnew = solver->work->x;
-    }
-    
-    if (solver->settings->en_input_soc && solver->work->numInputCones > 0) {
-        solver->work->zcnew = solver->work->u;
-    }
-
     // Initialize linear constraint slack variables if needed
     if (solver->settings->en_state_linear) {
         solver->work->vlnew = solver->work->x;
@@ -379,6 +422,13 @@ int solve(TinySolver *solver)
         // Save previous slack variables
         solver->work->v = solver->work->vnew;
         solver->work->z = solver->work->znew;
+        if (solver->settings->en_state_soc && solver->work->numStateCones > 0) {
+            solver->work->vc = solver->work->vcnew;
+        }
+        if (solver->settings->en_input_soc && solver->settings->en_input_bound &&
+            solver->work->numInputCones > 0) {
+            solver->work->zc = solver->work->zcnew;
+        }
       
     }
     

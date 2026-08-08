@@ -9,6 +9,7 @@ int main()
     float xref[12] = {0.0f};
     float u[4] = {0.0f};
     float xplan[12] = {0.0f};
+    float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT] = {0.0f};
 
     xref[2] = -1.0f;
 
@@ -42,5 +43,23 @@ int main()
     std::printf("TinyMPC wrapper smoke test passed.\n");
     std::printf("u = [ax=%f, ay=%f, az=%f, yawspeed=%f], planned_z=%f\n",
                 u[0], u[1], u[2], u[3], xplan[2]);
+
+    MPC_Reset();
+    MPC_Step_Scenario(x, TINY_MPC_SCENARIO_HOVER, u, xplan, diagnostics);
+    if (diagnostics[TINY_MPC_DIAG_POLICY] < TINY_MPC_SOLVE_CONVERGED ||
+        diagnostics[TINY_MPC_DIAG_STATE_VIOLATION] > 1.0e-4f ||
+        diagnostics[TINY_MPC_DIAG_INPUT_VIOLATION] > 1.0e-4f) {
+        std::fprintf(stderr,
+                     "Smoke test failed: constrained hover policy=%g state_violation=%g input_violation=%g.\n",
+                     diagnostics[TINY_MPC_DIAG_POLICY],
+                     diagnostics[TINY_MPC_DIAG_STATE_VIOLATION],
+                     diagnostics[TINY_MPC_DIAG_INPUT_VIOLATION]);
+        return 1;
+    }
+    std::printf("Constrained hover passed: policy=%g iterations=%g primal=%g dual=%g.\n",
+                diagnostics[TINY_MPC_DIAG_POLICY],
+                diagnostics[TINY_MPC_DIAG_ITERATIONS],
+                diagnostics[TINY_MPC_DIAG_PRIMAL_RESIDUAL],
+                diagnostics[TINY_MPC_DIAG_DUAL_RESIDUAL]);
     return 0;
 }

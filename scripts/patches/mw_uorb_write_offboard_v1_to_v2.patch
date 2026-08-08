@@ -1,43 +1,38 @@
 --- MW_uORB_Write.cpp
 +++ MW_uORB_Write.cpp
-@@ -37,6 +37,10 @@
- #include "MW_PX4_TaskControl.h"
+@@ -38,7 +38,9 @@
  #include "MW_uORB_Write.h"
  
-+#include <drivers/drv_hrt.h>
+ #include <drivers/drv_hrt.h>
 +#include <px4_platform_common/defines.h>
-+#include <uORB/topics/offboard_control_mode.h>
+ #include <uORB/topics/offboard_control_mode.h>
 +#include <uORB/topics/trajectory_setpoint.h>
  #include <uORB/uORBManager.hpp>
  #include <uORB/uORBDeviceMaster.hpp>
  #include <uORB/uORBDeviceNode.hpp>
-@@ -100,7 +104,50 @@
-     if (*orbAdvertObj == nullptr) {
-         return;
+@@ -114,10 +116,13 @@
      }
-+    /* Every PX4 uORB message begins with a uint64 timestamp, and consumers
-+     * treat 0 as infinitely stale. The generated bus leaves it unset, so
-+     * stamp the publish time when the model has not provided one. */
-+    if (busData != nullptr && *static_cast<uint64_t*>(busData) == 0u) {
-+        *static_cast<uint64_t*>(busData) = hrt_absolute_time();
-+    }
      orb_publish(orbData, *orbAdvertObj, busData);
-+
+ 
+-    /* Offboard heartbeat: when the model publishes trajectory_setpoint,
 +    /* TinyMPC-PX4 support-package patch v2.
 +     * Offboard heartbeat: when the model publishes trajectory_setpoint,
-+     * also broadcast offboard_control_mode at ~2.5 Hz so the commander
-+     * accepts and holds Offboard mode with this app as the sole setpoint
+      * also broadcast offboard_control_mode at ~2.5 Hz so the commander
+      * accepts and holds Offboard mode with this app as the sole setpoint
+-     * source (PX4 requires the heartbeat from the setpoint provider). */
 +     * source. Advertise the highest-order finite setpoint so PX4 enables
 +     * position/velocity feedback for guidance mode and acceleration-only
 +     * control for direct TinyMPC mode. */
-+    if (orbData == ORB_ID(trajectory_setpoint)) {
-+        static orb_advert_t ocm_advert = nullptr;
-+        static hrt_abstime ocm_last = 0;
-+        const hrt_abstime now = hrt_absolute_time();
-+        if (now - ocm_last > 400000) {
-+            ocm_last = now;
-+            offboard_control_mode_s ocm{};
-+            ocm.timestamp = now;
+     if (orbData == ORB_ID(trajectory_setpoint)) {
+         static orb_advert_t ocm_advert = nullptr;
+         static hrt_abstime ocm_last = 0;
+@@ -127,9 +132,20 @@
+             ocm_last = now;
+             offboard_control_mode_s ocm{};
+             ocm.timestamp = now;
+-            ocm.position = true;
+-            ocm.velocity = true;
+-            ocm.acceleration = true;
 +            const auto *setpoint = static_cast<const trajectory_setpoint_s *>(busData);
 +            if (setpoint != nullptr) {
 +                ocm.position = PX4_ISFINITE(setpoint->position[0]) &&
@@ -52,13 +47,6 @@
 +                                   PX4_ISFINITE(setpoint->acceleration[1]) &&
 +                                   PX4_ISFINITE(setpoint->acceleration[2]);
 +            }
-+            if (ocm_advert == nullptr) {
-+                ocm_advert = orb_advertise(ORB_ID(offboard_control_mode), &ocm);
-+            } else {
-+                orb_publish(ORB_ID(offboard_control_mode), ocm_advert, &ocm);
-+            }
-+        }
-+    }
- }
- 
- /**
+             if (ocm_advert == nullptr) {
+                 ocm_advert = orb_advertise(ORB_ID(offboard_control_mode), &ocm);
+             } else {

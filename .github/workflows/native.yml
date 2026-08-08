@@ -1,0 +1,17 @@
+name: Native TinyMPC checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  constrained-wrapper:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build TinyMPC and run wrapper smoke test
+        run: ./scripts/setup_tinympc_px4.sh
+      - name: Run deterministic constraint benchmarks
+        run: ./scripts/run_constraint_benchmarks.sh
+      - name: Run full-state actuator-envelope benchmark
+        run: ./scripts/run_full_state_benchmark.sh
