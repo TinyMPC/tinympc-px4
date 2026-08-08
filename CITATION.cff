@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use TinyMPC-PX4, please cite this software and the relevant TinyMPC publication."
+title: "TinyMPC-PX4"
+type: software
+authors:
+  - family-names: Mahajan
+    given-names: Ishaan
+license: MIT
+repository-code: "https://github.com/TinyMPC/tinympc-px4"
+url: "https://github.com/TinyMPC/tinympc-px4"
+keywords:
+  - model predictive control
+  - PX4
+  - quadrotor
+  - embedded control
+  - robotics software

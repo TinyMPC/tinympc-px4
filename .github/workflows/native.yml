@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check documentation links and code fences
+        run: python3 scripts/check_documentation.py
       - name: Build TinyMPC and run wrapper smoke test
         run: ./scripts/setup_tinympc_px4.sh
       - name: Run deterministic constraint benchmarks

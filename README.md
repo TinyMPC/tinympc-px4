@@ -1,27 +1,33 @@
 # TinyMPC-PX4
 
-TinyMPC-PX4 runs a constrained TinyMPC controller at 50 Hz **on the PX4 flight
-controller**. The optimization is compiled into the PX4 app; no companion
-computer or offboard optimizer solves the MPC problem.
+TinyMPC-PX4 integrates a constrained TinyMPC controller into PX4 at 50 Hz. The
+optimizer is compiled into the PX4 application; no companion computer solves
+the MPC problem. The native integration is currently restricted to PX4
+POSIX/SITL and is not hardware-qualified.
 
-The repository supports two intentionally separate control boundaries:
+## Configuration status
 
-- `guidance` publishes a predicted TinyMPC position/velocity plan that PX4's
-  position controller tracks. This is the conservative, previously verified
-  hover integration.
-- `direct` publishes only TinyMPC acceleration and yaw-rate commands. Position
-  and velocity are `NaN`, so PX4 bypasses its position/velocity feedback and
-  retains acceleration-to-attitude conversion, attitude/rate control, control
-  allocation, and safety handling.
+| Path | Purpose | Status |
+| --- | --- | --- |
+| `tinympc_chicane start mpc` | Native TinyMPC acceleration/yaw-rate outer loop with PX4 inner control | **Recommended SITL demonstration**; matched X500 run completed |
+| `tinympc_chicane start pid` | Stock PX4 cascaded outer-loop baseline on the same course | **Recommended baseline**; matched X500 run completed |
+| Native wrapper benchmarks | Deterministic constraint and regression checks | **Maintained CI path** |
+| Simulink `guidance` / `direct` | Earlier generated PX4 integrations and maneuver reproductions | **Legacy reproduction path**; MATLAB is optional |
+| `tinympc_fullstate` | TinyMPC attitude/rate/motor horizon to PX4 torque/thrust allocation | **Experimental SITL path**; only hover is closed-loop validated |
 
-There is also an **experimental SITL-only full-state path** built from the
-supplied 50 Hz hover-linearized `A/B` matrices. It makes normalized motor
-commands and motor slew part of the MPC problem, allowing one horizon to
-enforce position, attitude, body-rate, motor-authority, and slew limits
-together. It closes the Gazebo loop at PX4's torque/thrust control-allocation
-boundary while retaining commander, arming, failsafes, allocation, and output
-limiting. The build refuses flight targets: the matrix input scaling and target
-airframe still require identification and hardware validation.
+The path to reproduce first is the native acceleration-level comparison:
+
+```text
+PX4 EKF -> TinyMPC -> acceleration/yaw-rate -> PX4 attitude/rate control
+         -> PX4 control allocation -> motors
+```
+
+The legacy generated app can instead publish a predicted position/velocity
+plan (`guidance`) or acceleration/yaw-rate (`direct`). The experimental
+full-state path uses the supplied hover-linearized `A/B` matrices to include
+attitude, body rate, normalized motor authority, and slew in one horizon. It
+rejoins PX4 at torque/thrust allocation and deliberately refuses flight-target
+builds until the physical model and target timing are validated.
 
 > [!CAUTION]
 > This is an experimental research prototype, not a flight-certified
@@ -33,26 +39,20 @@ airframe still require identification and hardware validation.
 ## Control architecture
 
 ```text
-                             guidance mode
-PX4 EKF state -> TinyMPC ----------------------> PX4 position/velocity control
-      |             |                                      |
-      |             | direct mode: acceleration only       |
-      |             +--------------------------------------+
-      |                                                    v
-      +----------------------------------------> attitude/rate control
-                                                           |
-                                                           v
-                                               control allocation -> motors
-```
+recommended native path
+PX4 EKF state -> TinyMPC acceleration MPC -> PX4 attitude/rate control
+                                                   |
+                                                   v
+                                       control allocation -> motors
 
-This diagram shows the trajectory/acceleration API. The separate full-state
-SITL path branches directly from the EKF state through TinyMPC to PX4
-torque/thrust setpoints, bypassing the position/attitude/rate controllers but
-rejoining at control allocation.
+experimental full-state path
+PX4 EKF state -> TinyMPC state/motor MPC -> torque/thrust -> allocation
+```
 
 For the trajectory/acceleration API, the state is
 `[x y z roll pitch yaw vx vy vz p q r]` in PX4's local NED frame. TinyMPC uses
-a 25-knot, 0.5 s horizon and returns
+25 state knots and 24 control intervals at 20 ms (0.48 s of control preview)
+and returns
 `[ax ay az yawspeed]`. In direct mode, zero vertical acceleration means hover
 at PX4's acceleration interface; PX4 adds gravity compensation and converts
 the acceleration vector to attitude and collective thrust.
@@ -164,12 +164,16 @@ a substitute for Pixhawk-class target timing.
 
 ## Requirements
 
-- Ubuntu 22.04 (verified host platform).
-- Git, CMake, a C++17 compiler, Python 3, and the PX4 v1.15.3 build toolchain.
-- MATLAB/Simulink R2026a with MATLAB Coder, Simulink Coder, Embedded Coder,
-  UAV Toolbox, and the UAV Toolbox Support Package for PX4 Autopilots.
-- `patch` for the MathWorks support-package compatibility patch.
-- Gazebo Harmonic only for the optional Gazebo reproduction.
+- Native tests: Ubuntu 22.04, Git, CMake, Ninja, and a C++17 compiler.
+- PX4 SITL: Python 3 and the PX4 v1.15.3 build toolchain.
+- Gazebo reproduction: Gazebo Harmonic.
+- Telemetry-video rendering: `pyulog`, NumPy, Matplotlib, and FFmpeg.
+- Workshop-draft PDF rendering: Python 3 and ReportLab.
+
+MATLAB is **not required** for the recommended native chicane comparison. The
+legacy generated-app reproduction requires MATLAB/Simulink R2026a, MATLAB
+Coder, Simulink Coder, Embedded Coder, UAV Toolbox, the UAV Toolbox Support
+Package for PX4 Autopilots, and `patch`.
 
 The optional
 [`tinympc-matlab`](https://github.com/TinyMPC/tinympc-matlab) package is useful
@@ -177,40 +181,37 @@ for MATLAB-only experiments but is not in the flight feedback path.
 
 ## Quick start
 
-Clone the repository and fetch the pinned firmware:
+Clone the repository, build TinyMPC, and run the fast native checks:
 
 ```bash
 git clone https://github.com/TinyMPC/tinympc-px4.git
 cd tinympc-px4
-./scripts/setup_px4_firmware.sh
-./scripts/build_px4_sitl.sh
-```
-
-Build TinyMPC from source and run the wrapper smoke test:
-
-```bash
 ./scripts/setup_tinympc_px4.sh
-```
-
-Run all deterministic constrained examples and print CSV metrics:
-
-```bash
 ./scripts/run_constraint_benchmarks.sh
+./scripts/run_full_state_benchmark.sh
 ```
 
 The benchmark asserts finite outputs, solver-projected state/input bounds,
 scenario-level closed-loop limits, and zero fallbacks. It reports iterations,
 residuals, best-effort solves, and optimized desktop timing percentiles.
 
-Run the experimental supplied-matrix motor/flight-envelope comparison:
+Fetch the pinned PX4 release and build SITL with both native external modules:
 
 ```bash
-./scripts/run_full_state_benchmark.sh
+./scripts/setup_px4_firmware.sh
+./scripts/build_px4_sitl.sh
 ```
 
-The same API is now available in the SITL-only PX4 module below. Native
-p50/p95/p99 timing remains only a regression measurement; it does not
+Native p50/p95/p99 timing is only a host regression measurement; it does not
 establish the 20 ms deadline on a flight-controller MCU.
+
+### Recommended matched chicane
+
+Run `tinympc_chicane start mpc` for TinyMPC or `tinympc_chicane start pid` for
+the stock PX4 outer-loop baseline. Use one fresh X500 instance per controller
+and let takeoff fully settle before switching to Offboard. The complete
+commands, matched conditions, metrics, and ULog replay instructions are in
+[`docs/chicane_px4_comparison.md`](docs/chicane_px4_comparison.md).
 
 ### Experimental full-state PX4/Gazebo hover
 
@@ -236,7 +237,7 @@ validated. The exact state transform, motor mapping, guards, test result, and
 remaining hardware gate are documented in
 [`docs/full_state_actuator_constraints.md`](docs/full_state_actuator_constraints.md).
 
-## Generate the PX4 app
+## Legacy MATLAB/Simulink app
 
 ### Patch the MATLAB PX4 support package
 
@@ -290,7 +291,7 @@ Valid flight scenarios are `hover`, `virtual_wall`, `corridor`,
 `reduced_authority`, `figure_eight_soc`, and `figure_eight_box`. Valid output
 modes are `guidance` and `direct`.
 
-## Fly in SIH SITL
+## Legacy MATLAB/Simulink SIH reproduction
 
 Start the generated firmware from the PX4 root filesystem:
 
@@ -377,15 +378,16 @@ The next research steps and fair comparison protocol are in
   trajectory-setpoint writer.
 - `quadtest/wrapper/`: C API, constraints, diagnostics, native smoke test, and
   deterministic benchmarks, including the opt-in full-state/motor experiment.
-- `px4_external/`: SITL-only full-state module at PX4's torque/thrust control-
-  allocation boundary.
+- `px4_external/`: native SITL-only chicane module at the acceleration boundary
+  and experimental full-state module at the torque/thrust allocation boundary.
 - `quadtest/tinympc/TinyMPC/`: vendored TinyMPC source used by native tests and
   the generated PX4 app.
 - `quadtest/setup_tinympc_px4.m`: deterministic model and custom-code setup.
 - `quadtest/init_tinympc_quad.m`: matching MATLAB model plus build selection.
 - `scripts/`: pinned PX4 build, benchmark, and support-package helpers.
-- `docs/`: constraint definitions and research/validation direction.
-- `media/`: verified Gazebo hover recording.
+- `docs/`: constraint definitions, integration evidence, and research direction.
+- `media/`: verified Gazebo recordings and the matched chicane ULog replay.
+- `paper/`: editable source, renderer, and PDF for the workshop abstract draft.
 
 Generated Simulink code, native build products, firmware, and virtual
 environments are intentionally excluded. A fresh clone rebuilds them from the
@@ -396,3 +398,5 @@ checked-in model and source.
 This repository is available under the [MIT License](LICENSE). The vendored
 TinyMPC snapshot retains its license in
 [`quadtest/tinympc/TinyMPC/LICENSE`](quadtest/tinympc/TinyMPC/LICENSE).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing changes.
+Citation metadata is available in [`CITATION.cff`](CITATION.cff).

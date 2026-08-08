@@ -1,5 +1,17 @@
 third_party/
 
+# Python and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Flight logs and local telemetry exports
+*.ulg
+*.ulog
+*.log
+
 # MATLAB/Simulink generated artifacts
 quadtest/*.slxc
 quadtest/quadtest_ert_rtw/

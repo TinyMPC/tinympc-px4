@@ -1,4 +1,5 @@
 *.slx binary
 *.mp4 binary
+*.pdf binary
 *.patch -whitespace
 quadtest/tinympc/TinyMPC/** -whitespace
