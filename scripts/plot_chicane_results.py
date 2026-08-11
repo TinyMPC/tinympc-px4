@@ -56,17 +56,6 @@ def corridor_violation(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return np.min(np.vstack(distances), axis=0)
 
 
-def closest_corridor_point(x: float, y: float) -> tuple[float, float]:
-    """Return the nearest point in the corridor union to one query point."""
-    candidates = []
-    for xmin, xmax, ymin, ymax in CORRIDOR_RECTS:
-        cx = float(np.clip(x, xmin, xmax))
-        cy = float(np.clip(y, ymin, ymax))
-        candidates.append((np.hypot(x - cx, y - cy), cx, cy))
-    _, closest_x, closest_y = min(candidates)
-    return closest_x, closest_y
-
-
 def reference_at(time_s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate the exact piecewise-linear reference used by the chicane test."""
     time_s = np.maximum(np.asarray(time_s, dtype=float), 0.0)
@@ -252,36 +241,11 @@ def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
     add_direction_arrow(axis, tiny, TINY_COLOR, 3.45)
     add_direction_arrow(axis, px4, PX4_COLOR, 3.45)
 
-    worst_index = int(np.argmax(px4["violation_m"]))
-    worst_x = float(px4["x_m"][worst_index])
-    worst_y = float(px4["y_m"][worst_index])
-    closest_x, closest_y = closest_corridor_point(worst_x, worst_y)
-    worst_value = px4["metrics"]["maximum_outside_corridor_m"]
-    axis.plot(
-        [closest_x, worst_x], [closest_y, worst_y], linestyle=":",
-        color=PX4_COLOR, linewidth=1.4, zorder=6,
-    )
-    axis.scatter([worst_x], [worst_y], s=28, color=PX4_COLOR, zorder=7)
-    axis.annotate(
-        f"PX4 max outside\n{worst_value:.3f} m",
-        xy=(worst_x, worst_y),
-        xytext=(16, -38),
-        textcoords="offset points",
-        color=PX4_COLOR,
-        fontsize=9.5,
-        fontweight="semibold",
-        arrowprops=dict(arrowstyle="->", color=PX4_COLOR, lw=1.1),
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor=PX4_COLOR),
-        zorder=9,
-    )
     axis.set_xlim(-0.40, 3.40)
     axis.set_ylim(-0.42, 1.42)
     axis.set_aspect("equal", adjustable="box")
-    axis.set_xlabel("PX4 local north, $x$ [m]")
-    axis.set_ylabel("PX4 local east, $y$ [m]")
-    axis.set_title("Top-down trajectory through the chicane")
-    axis.grid(True, color="#B8B8B8", linewidth=0.6, alpha=0.45)
-    axis.legend(loc="upper right", fontsize=9.0, framealpha=0.96)
+    axis.set_xticks([])
+    axis.set_yticks([])
     save_figure(fig, output_dir, "chicane_top_down")
     plt.close(fig)
 
@@ -299,43 +263,13 @@ def plot_violation(tiny: dict, px4: dict, output_dir: Path) -> None:
     axis.fill_between(
         px4["time_s"], 0.0, px4["violation_m"], color=PX4_COLOR, alpha=0.12, zorder=1,
     )
-    for corner_number, corner_time in enumerate(CORNER_TIMES, start=1):
+    for corner_time in CORNER_TIMES:
         axis.axvline(corner_time, color="#777777", linestyle=":", linewidth=1.0, zorder=0)
-        axis.text(
-            corner_time + 0.04, 0.268, f"corner {corner_number}", rotation=90,
-            va="top", color="#666666", fontsize=8.5,
-        )
-
-    worst_index = int(np.argmax(px4["violation_m"]))
-    worst_time = float(px4["time_s"][worst_index])
-    worst_value = float(px4["violation_m"][worst_index])
-    axis.scatter([worst_time], [worst_value], s=30, color=PX4_COLOR, zorder=5)
-    axis.annotate(
-        f"PX4 peak = {worst_value:.3f} m",
-        xy=(worst_time, worst_value),
-        xytext=(worst_time + 0.50, worst_value - 0.035),
-        color=PX4_COLOR,
-        fontsize=9.5,
-        fontweight="semibold",
-        arrowprops=dict(arrowstyle="->", color=PX4_COLOR, lw=1.1),
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor=PX4_COLOR),
-    )
-    axis.text(
-        3.35,
-        0.018,
-        f"TinyMPC max = {tiny['metrics']['maximum_outside_corridor_m']:.3f} m",
-        color=TINY_COLOR,
-        fontsize=9.5,
-        fontweight="semibold",
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor=TINY_COLOR),
-        zorder=6,
-    )
 
     axis.set_xlim(0.0, DEFAULT_DURATION)
     axis.set_ylim(-0.005, 0.28)
     axis.set_xlabel("Time [s]")
     axis.set_ylabel("Outside-corridor distance [m]")
-    axis.set_title("Corridor violation")
     axis.grid(True, color="#B8B8B8", linewidth=0.6, alpha=0.45)
     axis.legend(loc="upper right", fontsize=9.0, framealpha=0.96)
     save_figure(fig, output_dir, "chicane_violation_time")
