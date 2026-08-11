@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -201,9 +199,7 @@ def add_direction_arrow(axis, run: dict, color: str, time_s: float) -> None:
 
 
 def save_figure(fig, output_dir: Path, stem: str) -> None:
-    for suffix in ("pdf", "svg", "png"):
-        kwargs = {"dpi": 300} if suffix == "png" else {}
-        fig.savefig(output_dir / f"{stem}.{suffix}", bbox_inches="tight", **kwargs)
+    fig.savefig(output_dir / f"{stem}.png", bbox_inches="tight", dpi=300)
 
 
 def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
@@ -215,7 +211,7 @@ def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
             facecolor=CORRIDOR_COLOR,
             edgecolor=CORRIDOR_EDGE,
             linewidth=1.3,
-            label="Feasible corridor",
+            label="_nolegend_",
             zorder=0,
         )
     )
@@ -225,24 +221,32 @@ def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
         linestyle="--",
         color=REFERENCE_COLOR,
         linewidth=1.6,
-        label="Reference centerline",
+        label="_nolegend_",
         zorder=2,
     )
     axis.plot(
         tiny["x_m"], tiny["y_m"], color=TINY_COLOR, linewidth=2.2,
-        label="TinyMPC $\\rightarrow$ PX4 inner loops", zorder=4,
+        label="TinyMPC–PX4", zorder=4,
     )
     axis.plot(
         px4["x_m"], px4["y_m"], color=PX4_COLOR, linewidth=2.0,
-        label="Stock PX4 cascaded control", zorder=3,
+        label="PX4 cascaded control", zorder=3,
     )
     axis.scatter(
         [0.0], [0.0], marker="o", s=58, facecolor="white", edgecolor="#1B7837",
-        linewidth=1.8, label="Start", zorder=8,
+        linewidth=1.8, zorder=8,
     )
     axis.scatter(
         [3.0], [1.0], marker="*", s=135, facecolor="#F0C419", edgecolor="#6B5500",
-        linewidth=1.0, label="Goal", zorder=8,
+        linewidth=1.0, zorder=8,
+    )
+    axis.annotate(
+        "Start", xy=(0.0, 0.0), xytext=(0, -18), textcoords="offset points",
+        ha="center", va="top", fontsize=9.5, fontweight="semibold", zorder=9,
+    )
+    axis.annotate(
+        "End", xy=(3.0, 1.0), xytext=(0, -18), textcoords="offset points",
+        ha="center", va="top", fontsize=9.5, fontweight="semibold", zorder=9,
     )
 
     add_direction_arrow(axis, tiny, TINY_COLOR, 3.45)
@@ -270,19 +274,6 @@ def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
         bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor=PX4_COLOR),
         zorder=9,
     )
-    axis.text(
-        0.025,
-        0.965,
-        f"TinyMPC max outside = {tiny['metrics']['maximum_outside_corridor_m']:.3f} m",
-        transform=axis.transAxes,
-        va="top",
-        color=TINY_COLOR,
-        fontsize=9.5,
-        fontweight="semibold",
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor=TINY_COLOR),
-        zorder=9,
-    )
-
     axis.set_xlim(-0.40, 3.40)
     axis.set_ylim(-0.42, 1.42)
     axis.set_aspect("equal", adjustable="box")
@@ -290,7 +281,7 @@ def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
     axis.set_ylabel("PX4 local east, $y$ [m]")
     axis.set_title("Top-down trajectory through the chicane")
     axis.grid(True, color="#B8B8B8", linewidth=0.6, alpha=0.45)
-    axis.legend(loc="upper right", fontsize=8.3, framealpha=0.96, ncol=2)
+    axis.legend(loc="upper right", fontsize=9.0, framealpha=0.96)
     save_figure(fig, output_dir, "chicane_top_down")
     plt.close(fig)
 
@@ -299,11 +290,11 @@ def plot_violation(tiny: dict, px4: dict, output_dir: Path) -> None:
     fig, axis = plt.subplots(figsize=(7.4, 3.75), constrained_layout=True)
     axis.plot(
         tiny["time_s"], tiny["violation_m"], color=TINY_COLOR, linewidth=2.2,
-        label="TinyMPC $\\rightarrow$ PX4 inner loops", zorder=4,
+        label="TinyMPC–PX4", zorder=4,
     )
     axis.plot(
         px4["time_s"], px4["violation_m"], color=PX4_COLOR, linewidth=2.0,
-        label="Stock PX4 cascaded control", zorder=3,
+        label="PX4 cascaded control", zorder=3,
     )
     axis.fill_between(
         px4["time_s"], 0.0, px4["violation_m"], color=PX4_COLOR, alpha=0.12, zorder=1,
@@ -344,92 +335,11 @@ def plot_violation(tiny: dict, px4: dict, output_dir: Path) -> None:
     axis.set_ylim(-0.005, 0.28)
     axis.set_xlabel("Time [s]")
     axis.set_ylabel("Outside-corridor distance [m]")
-    axis.set_title("Corridor violation versus time")
+    axis.set_title("Corridor violation")
     axis.grid(True, color="#B8B8B8", linewidth=0.6, alpha=0.45)
     axis.legend(loc="upper right", fontsize=9.0, framealpha=0.96)
     save_figure(fig, output_dir, "chicane_violation_time")
     plt.close(fig)
-
-
-def write_timeseries_csv(output_dir: Path, label: str, run: dict) -> None:
-    path = output_dir / f"{label}_chicane_timeseries.csv"
-    with path.open("w", newline="", encoding="utf-8") as output:
-        writer = csv.writer(output)
-        writer.writerow([
-            "ulog_timestamp_us",
-            "time_from_offboard_s",
-            "x_m",
-            "y_m",
-            "x_ref_m",
-            "y_ref_m",
-            "outside_corridor_m",
-        ])
-        writer.writerows(
-            zip(
-                run["timestamp_us"],
-                run["time_s"],
-                run["x_m"],
-                run["y_m"],
-                run["x_ref_m"],
-                run["y_ref_m"],
-                run["violation_m"],
-            )
-        )
-
-
-def write_metrics(output_dir: Path, tiny: dict, px4: dict, duration_s: float) -> None:
-    metrics = {
-        "schema_version": 1,
-        "coordinate_frame": (
-            "PX4 local NED x/y translated to the first vehicle_local_position "
-            "sample at or after Offboard entry"
-        ),
-        "evaluation": {
-            "duration_s": duration_s,
-            "outside_tolerance_m": OUTSIDE_TOLERANCE_M,
-            "goal_tolerance_m": GOAL_TOLERANCE_M,
-            "distance_definition": "Euclidean distance to the union of corridor rectangles",
-        },
-        "corridor_rectangles_m": [
-            {"x_min": r[0], "x_max": r[1], "y_min": r[2], "y_max": r[3]}
-            for r in CORRIDOR_RECTS
-        ],
-        "reference": {
-            "waypoints_m": REFERENCE_WAYPOINTS.tolist(),
-            "corner_times_s": list(CORNER_TIMES),
-            "finish_time_s": FINISH_TIME,
-        },
-        "runs": {
-            "tinympc_px4": {
-                "source_ulog": tiny["path"].name,
-                "local_origin_m": {"x": tiny["origin_x_m"], "y": tiny["origin_y_m"]},
-                **tiny["metrics"],
-                "solver_telemetry": {
-                    "number_of_solves": 1095,
-                    "mean_solve_time_ms": None,
-                    "median_solve_time_ms": None,
-                    "p95_solve_time_ms": None,
-                    "maximum_host_solve_time_ms": 1.068,
-                    "number_of_solver_failures": None,
-                    "number_of_fallbacks": None,
-                    "module_failures": 0,
-                    "source": "live module status captured for this run; not ULog telemetry",
-                    "missing_reason": (
-                        "The ULog has no TinyMPC debug/solver topic, so distribution, "
-                        "residual, solver-status, and fallback fields cannot be reconstructed."
-                    ),
-                },
-            },
-            "stock_px4": {
-                "source_ulog": px4["path"].name,
-                "local_origin_m": {"x": px4["origin_x_m"], "y": px4["origin_y_m"]},
-                **px4["metrics"],
-            },
-        },
-    }
-    with (output_dir / "chicane_metrics.json").open("w", encoding="utf-8") as output:
-        json.dump(metrics, output, indent=2)
-        output.write("\n")
 
 
 def main() -> None:
@@ -450,11 +360,8 @@ def main() -> None:
     px4 = load_run(args.px4_log, args.duration)
     plot_top_down(tiny, px4, args.output_dir)
     plot_violation(tiny, px4, args.output_dir)
-    write_timeseries_csv(args.output_dir, "tinympc", tiny)
-    write_timeseries_csv(args.output_dir, "stock_px4", px4)
-    write_metrics(args.output_dir, tiny, px4, args.duration)
 
-    print(f"Wrote figures and extracted data to {args.output_dir}")
+    print(f"Wrote PNG figures to {args.output_dir}")
     for label, run in (("TinyMPC", tiny), ("Stock PX4", px4)):
         m = run["metrics"]
         print(
