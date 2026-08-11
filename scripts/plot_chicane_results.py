@@ -263,8 +263,17 @@ def plot_violation(tiny: dict, px4: dict, output_dir: Path) -> None:
     axis.fill_between(
         px4["time_s"], 0.0, px4["violation_m"], color=PX4_COLOR, alpha=0.12, zorder=1,
     )
-    for corner_time in CORNER_TIMES:
+    for turn_number, corner_time in enumerate(CORNER_TIMES, start=1):
         axis.axvline(corner_time, color="#777777", linestyle=":", linewidth=1.0, zorder=0)
+        axis.text(
+            corner_time + 0.04,
+            0.268,
+            f"Turn {turn_number}",
+            rotation=90,
+            va="top",
+            color="#777777",
+            fontsize=8.5,
+        )
 
     axis.set_xlim(0.0, DEFAULT_DURATION)
     axis.set_ylim(-0.005, 0.28)
