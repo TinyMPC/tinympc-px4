@@ -40,7 +40,7 @@ OUTSIDE_TOLERANCE_M = 1.0e-6
 GOAL_TOLERANCE_M = 0.25
 
 TINY_COLOR = "#0072B2"
-PX4_COLOR = "#D55E00"
+TUNED_PX4_COLOR = "#D55E00"
 REFERENCE_COLOR = "#4D4D4D"
 CORRIDOR_COLOR = "#DCEFE6"
 CORRIDOR_EDGE = "#458B74"
@@ -191,8 +191,8 @@ def save_figure(fig, output_dir: Path, stem: str) -> None:
     fig.savefig(output_dir / f"{stem}.png", bbox_inches="tight", dpi=300)
 
 
-def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
-    fig, axis = plt.subplots(figsize=(7.4, 4.2), constrained_layout=True)
+def plot_top_down(tiny: dict, tuned_px4: dict, output_dir: Path) -> None:
+    fig, axis = plt.subplots(figsize=(7.4, 4.55), constrained_layout=True)
     axis.add_patch(
         Polygon(
             CORRIDOR_POLYGON,
@@ -218,8 +218,9 @@ def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
         label="TinyMPC–PX4", zorder=4,
     )
     axis.plot(
-        px4["x_m"], px4["y_m"], color=PX4_COLOR, linewidth=2.0,
-        label="PX4 cascaded control", zorder=3,
+        tuned_px4["x_m"], tuned_px4["y_m"], color=TUNED_PX4_COLOR,
+        linewidth=2.0, linestyle="--",
+        label="Tuned PX4 cascaded control", zorder=5,
     )
     axis.scatter(
         [0.0], [0.0], marker="o", s=58, facecolor="white", edgecolor="#1B7837",
@@ -230,44 +231,52 @@ def plot_top_down(tiny: dict, px4: dict, output_dir: Path) -> None:
         linewidth=1.0, zorder=8,
     )
     axis.annotate(
-        "Start", xy=(0.0, 0.0), xytext=(0, -18), textcoords="offset points",
-        ha="center", va="top", fontsize=9.5, fontweight="semibold", zorder=9,
+        "Start", xy=(0.0, 0.0), xytext=(0, 10), textcoords="offset points",
+        ha="center", va="bottom", fontsize=9.5, fontweight="semibold", zorder=9,
     )
     axis.annotate(
-        "End", xy=(3.0, 1.0), xytext=(0, -18), textcoords="offset points",
-        ha="center", va="top", fontsize=9.5, fontweight="semibold", zorder=9,
+        "End", xy=(3.0, 1.0), xytext=(0, 10), textcoords="offset points",
+        ha="center", va="bottom", fontsize=9.5, fontweight="semibold", zorder=9,
     )
 
     add_direction_arrow(axis, tiny, TINY_COLOR, 3.45)
-    add_direction_arrow(axis, px4, PX4_COLOR, 3.45)
+    add_direction_arrow(axis, tuned_px4, TUNED_PX4_COLOR, 3.45)
 
     axis.set_xlim(-0.40, 3.40)
     axis.set_ylim(-0.42, 1.42)
     axis.set_aspect("equal", adjustable="box")
     axis.set_xticks([])
     axis.set_yticks([])
+    axis.legend(
+        loc="upper center", bbox_to_anchor=(0.5, -0.025), ncol=2,
+        fontsize=9.0, framealpha=0.96, handlelength=2.7,
+    )
     save_figure(fig, output_dir, "chicane_top_down")
     plt.close(fig)
 
 
-def plot_violation(tiny: dict, px4: dict, output_dir: Path) -> None:
+def plot_tracking_error(tiny: dict, tuned_px4: dict, output_dir: Path) -> None:
     fig, axis = plt.subplots(figsize=(7.4, 3.75), constrained_layout=True)
     axis.plot(
-        tiny["time_s"], tiny["violation_m"], color=TINY_COLOR, linewidth=2.2,
+        tiny["time_s"], tiny["tracking_error_m"],
+        color=TINY_COLOR, linewidth=2.2,
         label="TinyMPC–PX4", zorder=4,
     )
     axis.plot(
-        px4["time_s"], px4["violation_m"], color=PX4_COLOR, linewidth=2.0,
-        label="PX4 cascaded control", zorder=3,
+        tuned_px4["time_s"], tuned_px4["tracking_error_m"],
+        color=TUNED_PX4_COLOR, linewidth=2.0, linestyle="--",
+        label="Tuned PX4 cascaded control", zorder=5,
     )
-    axis.fill_between(
-        px4["time_s"], 0.0, px4["violation_m"], color=PX4_COLOR, alpha=0.12, zorder=1,
+    maximum_error = max(
+        float(np.max(tiny["tracking_error_m"])),
+        float(np.max(tuned_px4["tracking_error_m"])),
     )
+    upper_limit = max(0.05, 1.08 * maximum_error)
     for turn_number, corner_time in enumerate(CORNER_TIMES, start=1):
         axis.axvline(corner_time, color="#777777", linestyle=":", linewidth=1.0, zorder=0)
         axis.text(
             corner_time + 0.04,
-            0.268,
+            0.96 * upper_limit,
             f"Turn {turn_number}",
             rotation=90,
             va="top",
@@ -276,19 +285,22 @@ def plot_violation(tiny: dict, px4: dict, output_dir: Path) -> None:
         )
 
     axis.set_xlim(0.0, DEFAULT_DURATION)
-    axis.set_ylim(-0.005, 0.28)
+    axis.set_ylim(0.0, upper_limit)
     axis.set_xlabel("Time [s]")
-    axis.set_ylabel("Outside-corridor distance [m]")
+    axis.set_ylabel("Reference-tracking error [m]")
     axis.grid(True, color="#B8B8B8", linewidth=0.6, alpha=0.45)
-    axis.legend(loc="upper right", fontsize=9.0, framealpha=0.96)
-    save_figure(fig, output_dir, "chicane_violation_time")
+    axis.legend(
+        loc="upper center", bbox_to_anchor=(0.5, 1.17), ncol=2,
+        fontsize=9.0, framealpha=0.96, handlelength=2.7,
+    )
+    save_figure(fig, output_dir, "chicane_tracking_error_time")
     plt.close(fig)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tinympc-log", type=Path, required=True)
-    parser.add_argument("--px4-log", type=Path, required=True)
+    parser.add_argument("--tuned-px4-log", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path("figures"))
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION)
     args = parser.parse_args()
@@ -300,12 +312,15 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tiny = load_run(args.tinympc_log, args.duration)
-    px4 = load_run(args.px4_log, args.duration)
-    plot_top_down(tiny, px4, args.output_dir)
-    plot_violation(tiny, px4, args.output_dir)
+    tuned_px4 = load_run(args.tuned_px4_log, args.duration)
+    plot_top_down(tiny, tuned_px4, args.output_dir)
+    plot_tracking_error(tiny, tuned_px4, args.output_dir)
 
     print(f"Wrote PNG figures to {args.output_dir}")
-    for label, run in (("TinyMPC", tiny), ("Stock PX4", px4)):
+    for label, run in (
+        ("TinyMPC", tiny),
+        ("Tuned PX4", tuned_px4),
+    ):
         m = run["metrics"]
         print(
             f"{label}: max={m['maximum_outside_corridor_m']:.6f} m, "

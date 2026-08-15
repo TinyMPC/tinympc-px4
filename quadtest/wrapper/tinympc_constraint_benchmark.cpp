@@ -142,10 +142,11 @@ Result runScenario(int scenario, const char* name)
 
 Result runPx4CascadedPidChicane()
 {
-    constexpr float kPositionP = 0.95f;
-    constexpr float kVelocityP = 1.8f;
-    constexpr float kVelocityI = 0.4f;
-    constexpr float kVelocityD = 0.2f;
+    // Best zero-departure PX4 gain set retained from the SITL tuning sweep.
+    constexpr float kPositionP = 0.21f;
+    constexpr float kVelocityP = 5.0f;
+    constexpr float kVelocityI = 0.17f;
+    constexpr float kVelocityD = 0.13f;
     constexpr float kHorizontalVelocityLimit = 12.0f;
     constexpr float kHorizontalAccelerationLimit =
         kFigureEightConeSlope * kGravity;
@@ -154,7 +155,7 @@ Result runPx4CascadedPidChicane()
     float u[4] = {0.0f};
     float velocityIntegral[2] = {0.0f, 0.0f};
     float measuredAcceleration[2] = {0.0f, 0.0f};
-    Result result{-1, "px4_cascaded_pid_chicane", x[0], x[0], 0.0f,
+    Result result{-1, "tuned_px4_cascaded_pid_chicane", x[0], x[0], 0.0f,
                   0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                   0.0f, 0.0f, 0.0f, 0.0f, 0.0, 0.0, 0.0, 0.0,
                   0, 0, 0, 0};
@@ -294,7 +295,7 @@ int main()
     ok = ok && chicaneSoc.maxEquivalentTiltDeg <= 15.001f;
     ok = ok && cascadedPid.maxEquivalentTiltDeg <= 15.001f;
     ok = ok && chicaneSoc.maxChicaneCorridorViolation <= 1.0e-5f;
-    ok = ok && cascadedPid.maxChicaneCorridorViolation > 0.15f;
+    ok = ok && cascadedPid.maxChicaneCorridorViolation <= 1.0e-5f;
     ok = ok && chicaneSoc.finalChicanePositionError < 0.03f;
     ok = ok && cascadedPid.finalChicanePositionError < 0.03f;
     for (const Result& result : results) {

@@ -10,7 +10,8 @@ POSIX/SITL and is not hardware-qualified.
 | Path | Purpose | Status |
 | --- | --- | --- |
 | `tinympc_chicane start mpc` | Native TinyMPC acceleration/yaw-rate outer loop with PX4 inner control | **Recommended SITL demonstration**; matched X500 run completed |
-| `tinympc_chicane start pid` | Stock PX4 cascaded outer-loop baseline on the same course | **Recommended baseline**; matched X500 run completed |
+| `tinympc_chicane start pid_tuned` | Tuned stock PX4 cascaded outer-loop baseline on the same course | **Recommended fair baseline**; gain-verified matched X500 run completed |
+| `tinympc_chicane start pid` | PX4 cascaded outer loop with the vehicle's current gains | Optional diagnostic; not the reported fair baseline |
 | Native wrapper benchmarks | Deterministic constraint and regression checks | **Maintained CI path** |
 | Simulink `guidance` / `direct` | Earlier generated PX4 integrations and maneuver reproductions | **Legacy reproduction path**; MATLAB is optional |
 | `tinympc_fullstate` | TinyMPC attitude/rate/motor horizon to PX4 torque/thrust allocation | **Experimental SITL path**; only hover is closed-loop validated |
@@ -72,7 +73,7 @@ state does not make the problem infeasible by definition.
 | `reduced_authority` | Move 1 m forward while horizontal acceleration is limited to ±0.75 m/s², vertical acceleration to ±1.5 m/s², and yaw rate to ±0.5 rad/s | Replanning with degraded control authority |
 | `figure_eight_soc` | Fly a smooth 3D figure-eight while enforcing `sqrt(ax²+ay²) <= tan(15°) Tz` and a thrust/input envelope at every horizon knot | Joint trajectory and coupled tilt/thrust planning without an external disturbance |
 | `figure_eight_box` | Same model, reference, costs, and boxes with only the cone removed | Matched intrinsic baseline for the SOC constraint |
-| `chicane_soc` | Two sharp turns through a 0.36 m center-position corridor with the same 15° cone | Horizon-aware constrained planning versus stock PX4 cascaded position/velocity control, without an external disturbance |
+| `chicane_soc` | Two sharp turns through a 0.36 m center-position corridor with the same 15° cone | Horizon-aware constrained planning versus tuned PX4 cascaded position/velocity control, without an external disturbance |
 
 The native benchmark also includes `wall_baseline`, which uses the same model,
 reference, input limits, and 0.9 m/s disturbance without the wall constraint.
@@ -92,7 +93,7 @@ gate.
 
 ## Current validation status
 
-The following checks were run on August 6, 2026 with PX4 v1.15.3 and
+The following checks were run on August 6 and 11, 2026 with PX4 v1.15.3 and
 MATLAB/Simulink R2026a:
 
 - native C++ smoke test and all deterministic constraint assertions;
@@ -108,9 +109,11 @@ MATLAB/Simulink R2026a:
   425 us worst-case SITL host solve, below the 18 ms runtime deadline; and
 - MATLAB model update, Simulink code generation, and a final PX4 link with
   both `px4_simulink_app` and `tinympc_fullstate` present.
-- matched no-wind X500 chicane runs through the same PX4 inner loops: TinyMPC
-  remained inside the corridor with 1,095 consecutive solves and a 1.068 ms
-  worst host solve, while stock PX4 cascaded control cut 0.249 m outside.
+- matched no-wind X500 chicane runs through the same PX4 inner loops: both
+  TinyMPC and tuned PX4 remained inside the measured corridor and landed
+  normally. TinyMPC completed 1,095 consecutive solves with a 1.068 ms worst
+  host solve and achieved 0.113 m RMS tracking error, versus 0.250 m for tuned
+  PX4. These are SITL host results, not flight-target timing evidence.
 
 The earlier guidance-mode hover was also verified in SIH and Gazebo. In that
 test the vehicle remained in Offboard for 151 seconds and held altitude within
@@ -128,7 +131,7 @@ Gazebo recordings of the direct-acceleration maneuvers are also included:
   through four visual trajectory arches.
 
 The [matched chicane telemetry replay](media/tinympc_chicane_px4_sitl_comparison.mp4)
-uses actual PX4 SITL ULogs and shows TinyMPC beside stock PX4 on the same
+uses actual PX4 SITL ULogs and shows TinyMPC beside tuned PX4 on the same
 no-wind course. The exact controller boundaries, quantitative results, and
 reproduction steps are in
 [`docs/chicane_px4_comparison.md`](docs/chicane_px4_comparison.md).
@@ -168,7 +171,6 @@ a substitute for Pixhawk-class target timing.
 - PX4 SITL: Python 3 and the PX4 v1.15.3 build toolchain.
 - Gazebo reproduction: Gazebo Harmonic.
 - Telemetry-video rendering: `pyulog`, NumPy, Matplotlib, and FFmpeg.
-- Workshop-draft PDF rendering: Python 3 and ReportLab.
 
 MATLAB is **not required** for the recommended native chicane comparison. The
 legacy generated-app reproduction requires MATLAB/Simulink R2026a, MATLAB
@@ -207,10 +209,12 @@ establish the 20 ms deadline on a flight-controller MCU.
 
 ### Recommended matched chicane
 
-Run `tinympc_chicane start mpc` for TinyMPC or `tinympc_chicane start pid` for
-the stock PX4 outer-loop baseline. Use one fresh X500 instance per controller
-and let takeoff fully settle before switching to Offboard. The complete
-commands, matched conditions, metrics, and ULog replay instructions are in
+Run `tinympc_chicane start mpc` for TinyMPC or configure the documented gains
+and run `tinympc_chicane start pid_tuned` for the fair PX4 baseline. The tuned
+mode refuses to start if the gain set or 15-degree tilt setting does not match.
+Use one fresh X500 instance per controller and let takeoff fully settle before
+switching to Offboard. The complete commands, matched conditions, metrics, and
+ULog replay instructions are in
 [`docs/chicane_px4_comparison.md`](docs/chicane_px4_comparison.md).
 
 ### Experimental full-state PX4/Gazebo hover
@@ -238,6 +242,13 @@ remaining hardware gate are documented in
 [`docs/full_state_actuator_constraints.md`](docs/full_state_actuator_constraints.md).
 
 ## Legacy MATLAB/Simulink app
+
+Explicitly enable the generated app in the PX4 SITL board configuration. The
+default native-only setup deliberately leaves it disabled:
+
+```bash
+ENABLE_SIMULINK_APP=1 ./scripts/setup_px4_firmware.sh
+```
 
 ### Patch the MATLAB PX4 support package
 

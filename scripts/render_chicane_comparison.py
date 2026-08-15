@@ -21,6 +21,9 @@ CORRIDOR_POLYGON = np.array([
     [3.30, 1.18], [1.32, 1.18], [1.32, 0.18], [-0.30, 0.18],
 ])
 REFERENCE = np.array([[0.0, 0.0], [1.5, 0.0], [1.5, 1.0], [3.0, 1.0]])
+REFERENCE_TIMES = np.array([0.0, 1.6, 2.8, 4.4, 6.0])
+REFERENCE_X = np.array([0.0, 1.5, 1.5, 3.0, 3.0])
+REFERENCE_Y = np.array([0.0, 0.0, 1.0, 1.0, 1.0])
 
 
 def corridor_violation(x, y):
@@ -48,20 +51,30 @@ def load_offboard_path(path, duration=6.0):
     x = local["x"][selected] - local["x"][origin_index]
     y = local["y"][selected] - local["y"][origin_index]
     violation = corridor_violation(x, y)
-    return time, x, y, violation
+    x_reference = np.interp(time, REFERENCE_TIMES, REFERENCE_X)
+    y_reference = np.interp(time, REFERENCE_TIMES, REFERENCE_Y)
+    tracking_error = np.hypot(x - x_reference, y - y_reference)
+    return time, x, y, violation, tracking_error
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mpc-log", type=Path, required=True)
-    parser.add_argument("--pid-log", type=Path, required=True)
+    parser.add_argument("--tuned-px4-log", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    paths = [load_offboard_path(args.mpc_log), load_offboard_path(args.pid_log)]
-    labels = ["TinyMPC → PX4 inner loops", "Stock PX4 cascaded position/velocity"]
-    colors = ["#35e07a", "#ff5252"]
-    results = [float(path[3].max()) for path in paths]
+    paths = [
+        load_offboard_path(args.mpc_log),
+        load_offboard_path(args.tuned_px4_log),
+    ]
+    labels = ["TinyMPC → PX4 inner loops", "Tuned PX4 cascaded control"]
+    colors = ["#35e07a", "#ff9f1c"]
+    maximum_violations = [float(path[3].max()) for path in paths]
+    rms_tracking_errors = [
+        float(np.sqrt(np.trapezoid(path[4] ** 2, path[0]) / (path[0][-1] - path[0][0])))
+        for path in paths
+    ]
 
     plt.style.use("dark_background")
     fig, axes = plt.subplots(1, 2, figsize=(16, 6), dpi=120)
@@ -104,14 +117,16 @@ def main():
 
     def update(frame):
         replay_time = replay_times[frame]
-        for index, (time, x, y, violation) in enumerate(paths):
+        for index, (time, x, y, violation, tracking_error) in enumerate(paths):
             upto = max(1, int(np.searchsorted(time, replay_time, side="right")))
             trails[index].set_data(x[:upto], y[:upto])
             vehicles[index].set_offsets(np.array([[x[upto - 1], y[upto - 1]]]))
             live_max = float(violation[:upto].max())
             verdict = "INSIDE" if live_max <= 1.0e-3 else "CUTS CORNER"
             metrics[index].set_text(
-                f"t = {replay_time:4.1f} s\nmax outside = {live_max * 100:4.1f} cm\n{verdict}")
+                f"t = {replay_time:4.1f} s\n"
+                f"tracking error = {tracking_error[upto - 1]:.3f} m\n"
+                f"max outside = {live_max * 100:4.1f} cm\n{verdict}")
         return trails + vehicles + metrics
 
     animation = FuncAnimation(fig, update, frames=len(replay_times), interval=1000 / 30,
@@ -122,8 +137,10 @@ def main():
     animation.save(str(args.output), writer=writer)
     plt.close(fig)
     print(f"wrote {args.output}")
-    print(f"TinyMPC max outside: {results[0]:.6f} m")
-    print(f"PX4 cascaded max outside: {results[1]:.6f} m")
+    print(f"TinyMPC max outside: {maximum_violations[0]:.6f} m")
+    print(f"Tuned PX4 max outside: {maximum_violations[1]:.6f} m")
+    print(f"TinyMPC RMS tracking: {rms_tracking_errors[0]:.6f} m")
+    print(f"Tuned PX4 RMS tracking: {rms_tracking_errors[1]:.6f} m")
 
 
 if __name__ == "__main__":

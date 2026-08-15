@@ -1,4 +1,4 @@
-# Matched TinyMPC versus PX4 cascaded-controller chicane
+# Matched TinyMPC versus tuned PX4 cascaded-controller chicane
 
 This demo isolates the useful difference between a horizon-aware constrained
 controller and PX4's reactive cascaded position/velocity controller. There is
@@ -14,12 +14,17 @@ PX4 EKF -> TinyMPC position/velocity horizon -> acceleration/yaw-rate
          -> PX4 control allocation -> Gazebo X500 motors
 ```
 
-The matched baseline changes only the outer position/velocity controller:
+The matched baseline changes only the outer position/velocity controller and
+uses the best zero-departure PX4 gain set found in the recorded tuning sweep:
 
 ```text
 PX4 EKF -> stock PX4 cascaded position/velocity controller
          -> the same PX4 attitude/rate loops and allocation -> X500 motors
 ```
+
+`tinympc_chicane start pid_tuned` verifies the four tuned horizontal gains and
+the common 15-degree tilt setting before it will publish an Offboard heartbeat.
+It does not replace or reimplement PX4's controller.
 
 The separate `tinympc_fullstate` path goes deeper, from the PX4 EKF through a
 12-state/four-motor TinyMPC horizon to PX4 torque/thrust allocation. Neither
@@ -45,22 +50,42 @@ infeasible.
 
 ## Results
 
-The deterministic ideal-plant benchmark reports:
+The fair matched PX4/Gazebo comparison reports:
 
-| Controller | Maximum outside corridor | Final position error | Maximum equivalent tilt | Fallbacks |
-| --- | ---: | ---: | ---: | ---: |
-| TinyMPC chicane SOC | 0.000 m | 0.0025 m | 15.000 deg | 0 |
-| PX4-equation cascaded baseline | 0.231 m | 0.0106 m | 12.819 deg | 0 |
-
-The matched PX4/Gazebo runs report:
-
-| Controller | Maximum outside corridor | Completion/safety |
-| --- | ---: | --- |
-| TinyMPC -> PX4 inner loops | 0.000 m | 1,095 consecutive solves, no module failure, remained Offboard |
-| Stock PX4 cascaded position/velocity | 0.249 m | completed and landed normally |
+| Controller | Maximum outside corridor | RMS tracking error | Final tracking error | Completion |
+| --- | ---: | ---: | ---: | --- |
+| TinyMPC -> PX4 inner loops | 0.000 m | 0.113 m | 0.005 m | completed and landed normally |
+| Tuned PX4 cascaded position/velocity | 0.000 m | 0.250 m | 0.130 m | completed and landed normally |
 
 The successful TinyMPC run observed a 1.068 ms worst host solve. That is SITL
 host timing, not Pixhawk timing evidence.
+
+Both controllers satisfy the measured geometric corridor. Tuned PX4 does so
+mainly by lagging the sharp reference; TinyMPC uses 25 state knots at 20 ms to
+optimize 0.48 seconds of reference preview and has 2.2 times lower RMS tracking
+error. PX4's stock cascaded controller is not claimed to be generally unable
+to traverse the course.
+
+## Tuning budget
+
+No chicane-specific TinyMPC cost, horizon, ADMM penalty, or iteration setting
+was tuned; the chicane reused the existing project solver configuration. The
+TinyMPC/PX4 integration itself was engineered and debugged, so it should not be
+described as an entirely out-of-the-box controller.
+
+The tuned-PX4 study evaluated approximately 220,000 deterministic ideal/lag
+model parameter samples and four PX4 SITL candidates. The best tested
+zero-departure gains were:
+
+```text
+MPC_XY_P            0.21
+MPC_XY_VEL_P_ACC    5.00
+MPC_XY_VEL_I_ACC    0.17
+MPC_XY_VEL_D_ACC    0.13
+```
+
+This is an exploratory tuned baseline, not a global PX4 optimum or a
+hardware-safe gain recommendation.
 
 The telemetry replay is checked in at
 [`media/tinympc_chicane_px4_sitl_comparison.mp4`](../media/tinympc_chicane_px4_sitl_comparison.mp4).
@@ -82,11 +107,12 @@ Start X500 Gazebo, spawn the visual course, and configure the common limit:
 ```
 
 In the PX4 shell, run one controller per fresh vehicle instance. Let takeoff
-fully settle before the handoff; verify near-zero `vx/vy/vz` first.
+fully settle before the handoff; verify near-zero `vx/vy/vz` first. TinyMPC
+requires only the common tilt setting:
 
 ```text
 param set MPC_TILTMAX_AIR 15
-tinympc_chicane start mpc       # use pid for stock PX4 outer loops
+tinympc_chicane start mpc
 commander takeoff
 listener vehicle_local_position -n 1
 commander mode offboard
@@ -94,12 +120,24 @@ tinympc_chicane status
 commander land
 ```
 
+For the tuned PX4 run, configure the recorded gains before starting the
+verification mode:
+
+```text
+param set MPC_TILTMAX_AIR 15
+param set MPC_XY_P 0.21
+param set MPC_XY_VEL_P_ACC 5.0
+param set MPC_XY_VEL_I_ACC 0.17
+param set MPC_XY_VEL_D_ACC 0.13
+tinympc_chicane start pid_tuned
+```
+
 Render any completed matched log pair with:
 
 ```bash
 python scripts/render_chicane_comparison.py \
   --mpc-log /path/to/tinympc.ulg \
-  --pid-log /path/to/px4_pid.ulg \
+  --tuned-px4-log /path/to/px4_pid_tuned.ulg \
   --output media/tinympc_chicane_px4_sitl_comparison.mp4
 ```
 

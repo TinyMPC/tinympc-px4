@@ -89,13 +89,14 @@ box-only case reaches `15.969 deg` and violates the cone metric by
 - Constraint handoff: 0.30 seconds inside the geometric corner overlap so PX4
   inner-loop lag does not create an artificial one-sample infeasibility.
 
-The native matched baseline implements PX4 v1.15 default horizontal position
-P and velocity PID equations, velocity limiting, tilt limiting, and tracking
-anti-windup on the same ideal double-integrator. TinyMPC has zero corridor
-violation and 2.5 mm final error; the cascaded baseline cuts 0.231 m outside
-before settling to 10.6 mm final error. Both remain within the common 15-degree
-limit and receive no external disturbance. The full PX4/Gazebo comparison is
-documented in [`chicane_px4_comparison.md`](chicane_px4_comparison.md).
+The native matched baseline implements PX4 v1.15 horizontal position and
+velocity PID equations with the retained tuned gains, velocity limiting, tilt
+limiting, and tracking anti-windup on the same ideal double-integrator. Both
+controllers have zero corridor violation. TinyMPC finishes with 2.5 mm error;
+the tuned cascaded baseline finishes with 13.5 mm error. Both remain within the
+common 15-degree limit and receive no external disturbance. The full
+PX4/Gazebo comparison is documented in
+[`chicane_px4_comparison.md`](chicane_px4_comparison.md).
 
 ## Constraint semantics
 

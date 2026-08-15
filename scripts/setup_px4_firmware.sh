@@ -35,13 +35,28 @@ fi
 actual_version="$(git -C "${px4_dir}" describe --tags --always)"
 echo "PX4 checkout reports: ${actual_version}"
 
-# The MATLAB-generated Simulink app must be a registered PX4 module or the
-# SITL build.ninja has no rules for it and MATLAB's fast build fails with
-# "Failed to find the required search string in build.ninja".
+# Native TinyMPC is the default public path and does not require generated
+# MATLAB sources. Enable the legacy Simulink app only when explicitly asked;
+# otherwise a clean native-only build must remain independent of MATLAB.
+enable_simulink_app="${ENABLE_SIMULINK_APP:-0}"
+if [ "${enable_simulink_app}" != "0" ] && [ "${enable_simulink_app}" != "1" ]; then
+  echo "ENABLE_SIMULINK_APP must be 0 or 1." >&2
+  exit 1
+fi
+
 sitl_board="${px4_dir}/boards/px4/sitl/default.px4board"
-if [ -f "${sitl_board}" ] && ! grep -q 'CONFIG_MODULES_PX4_SIMULINK_APP=y' "${sitl_board}"; then
-  echo "CONFIG_MODULES_PX4_SIMULINK_APP=y" >> "${sitl_board}"
-  echo "Enabled px4_simulink_app module in SITL board config."
+if [ "${enable_simulink_app}" = "1" ]; then
+  if [ -f "${sitl_board}" ] && ! grep -q 'CONFIG_MODULES_PX4_SIMULINK_APP=y' "${sitl_board}"; then
+    echo "CONFIG_MODULES_PX4_SIMULINK_APP=y" >> "${sitl_board}"
+    echo "Enabled legacy px4_simulink_app module in SITL board config."
+  fi
+else
+  if [ -f "${sitl_board}" ] && grep -q 'CONFIG_MODULES_PX4_SIMULINK_APP=y' "${sitl_board}"; then
+    echo "Legacy px4_simulink_app is already enabled in this PX4 checkout."
+    echo "Its generated sources must exist, or use a clean PX4 checkout for the native-only build."
+  else
+    echo "Leaving legacy px4_simulink_app disabled (native TinyMPC build)."
+  fi
 fi
 
 echo

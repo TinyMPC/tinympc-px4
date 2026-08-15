@@ -59,8 +59,10 @@ and a stated fallback if the horizon becomes infeasible.
 
 The checked-in no-wind chicane is now the matched intrinsic demonstration: the
 same X500, estimator, 15-degree tilt limit, inner loops, allocation, and sharp
-reference are used for TinyMPC and stock PX4. TinyMPC remains inside the
-0.36 m corridor; stock cascaded control cuts approximately 0.249 m outside.
+reference are used for TinyMPC and tuned PX4. Both remain inside the measured
+0.36 m corridor. TinyMPC achieves 0.113 m RMS tracking error versus 0.250 m for
+the best tested zero-departure PX4 gain set because the tuned cascaded
+controller remains feasible mainly by lagging the sharp reference.
 
 ### 3. Reduced thrust or actuator authority
 

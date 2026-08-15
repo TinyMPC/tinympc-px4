@@ -3,8 +3,9 @@
  *
  * mpc: PX4 EKF -> TinyMPC position/velocity MPC -> acceleration setpoint ->
  *      PX4 attitude/rate controllers -> PX4 control allocation -> motors.
- * pid: PX4 EKF -> stock PX4 cascaded position/velocity controller -> the same
- *      PX4 attitude/rate/allocation stack.
+ * pid/pid_tuned: PX4 EKF -> stock PX4 cascaded position/velocity controller
+ *      -> the same PX4 attitude/rate/allocation stack. pid_tuned additionally
+ *      verifies the gain set used by the published fair comparison.
  *
  * Both modes receive the same time-parameterized chicane and use the same
  * vehicle and 15-degree tilt limit. The module never publishes motor commands.
@@ -47,12 +48,18 @@ constexpr uint64_t kSolveDeadlineUs = 18000;
 constexpr float kMaximumCorridorDeparture = 0.60f;
 constexpr float kMaximumAltitudeError = 0.60f;
 constexpr float kMaximumHorizontalSpeed = 5.0f;
+constexpr float kRequiredTiltLimitDegrees = 15.0f;
+constexpr float kTunedPositionGain = 0.21f;
+constexpr float kTunedVelocityProportionalGain = 5.0f;
+constexpr float kTunedVelocityIntegralGain = 0.17f;
+constexpr float kTunedVelocityDerivativeGain = 0.13f;
 constexpr int kPx4CustomMainModeAuto = 4;
 constexpr int kPx4CustomSubModeAutoLoiter = 3;
 
 enum ControllerMode {
 	ModeMpc = 0,
 	ModePid = 1,
+	ModePidTuned = 2,
 };
 
 enum FailureReason {
@@ -108,9 +115,31 @@ bool read_int_param(const char *name, int32_t &value)
 	return handle != PARAM_INVALID && param_get(handle, &value) == PX4_OK;
 }
 
+bool require_float_param(const char *name, float expected, float tolerance = 1.0e-3f)
+{
+	const param_t handle = param_find(name);
+	float value = NAN;
+
+	if (handle == PARAM_INVALID || param_get(handle, &value) != PX4_OK || !finite(value)) {
+		PX4_ERR("required parameter %s is unavailable", name);
+		return false;
+	}
+
+	if (std::fabs(value - expected) > tolerance) {
+		PX4_ERR("%s=%.3f; required %.3f", name, (double)value, (double)expected);
+		return false;
+	}
+
+	return true;
+}
+
 const char *mode_name(int mode)
 {
-	return mode == ModePid ? "px4_pid" : "tinympc";
+	switch (mode) {
+	case ModePid: return "px4_pid";
+	case ModePidTuned: return "px4_pid_tuned";
+	default: return "tinympc";
+	}
 }
 
 const char *failure_name(int reason)
@@ -140,6 +169,24 @@ public:
 		    (autostart != 4001 && autostart != 4002 &&
 		     autostart != 4005 && autostart != 4010)) {
 			PX4_ERR("requires a Gazebo X500 multirotor airframe");
+			g_status.failed = true;
+			g_status.failure_reason = FailureConfiguration;
+			return false;
+		}
+
+		bool parameters_valid = require_float_param(
+			"MPC_TILTMAX_AIR", kRequiredTiltLimitDegrees, 1.0e-2f);
+
+		if (_mode == ModePidTuned) {
+			parameters_valid = require_float_param("MPC_XY_P", kTunedPositionGain) &&
+					   require_float_param("MPC_XY_VEL_P_ACC", kTunedVelocityProportionalGain) &&
+					   require_float_param("MPC_XY_VEL_I_ACC", kTunedVelocityIntegralGain) &&
+					   require_float_param("MPC_XY_VEL_D_ACC", kTunedVelocityDerivativeGain) &&
+					   parameters_valid;
+		}
+
+		if (!parameters_valid) {
+			PX4_ERR("controller parameters do not match mode=%s", mode_name(_mode));
 			g_status.failed = true;
 			g_status.failure_reason = FailureConfiguration;
 			return false;
@@ -208,7 +255,7 @@ private:
 		offboard_control_mode_s control_mode{};
 		control_mode.timestamp = now;
 
-		if (_mode == ModePid) {
+		if (_mode != ModeMpc) {
 			control_mode.position = true;
 		} else {
 			control_mode.acceleration = true;
@@ -529,7 +576,7 @@ int controller_thread_main(int argc, char *argv[])
 
 void print_usage()
 {
-	PX4_INFO("usage: tinympc_chicane {start [mpc|pid]|stop|status}");
+	PX4_INFO("usage: tinympc_chicane {start [mpc|pid|pid_tuned]|stop|status}");
 	PX4_INFO("SITL only. Same chicane/no wind; PX4 MPC_TILTMAX_AIR must be 15.");
 }
 
@@ -555,6 +602,8 @@ extern "C" __EXPORT int tinympc_chicane_main(int argc, char *argv[])
 				g_requested_mode = ModeMpc;
 			} else if (std::strcmp(argv[2], "pid") == 0) {
 				g_requested_mode = ModePid;
+			} else if (std::strcmp(argv[2], "pid_tuned") == 0) {
+				g_requested_mode = ModePidTuned;
 			} else {
 				PX4_ERR("unknown controller: %s", argv[2]);
 				return PX4_ERROR;
