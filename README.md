@@ -5,13 +5,16 @@ TinyMPC-PX4 runs a constrained model-predictive controller inside PX4 at
 of state estimation, attitude/rate control, allocation, arming, and failsafes.
 No companion computer solves the MPC problem.
 
+> [!CAUTION]
+> **Software validation only.** The PX4 integration has been tested in native
+> benchmarks and PX4 SITL/Gazebo, not on flight hardware. Hardware validation
+> on Pixhawk-class targets is ongoing work.
+
 ```text
 PX4 EKF -> TinyMPC -> acceleration/yaw rate -> PX4 inner loops -> motors
 ```
 
 The recommended implementation is native C++ and does not require MATLAB.
-It is currently validated in PX4 Software-in-the-Loop (SITL), not on flight
-hardware.
 
 ## Chicane comparison
 
@@ -104,10 +107,10 @@ generated application.
 
 This is an experimental research controller, not flight-certified software.
 Successful SITL runs and predicted constraints do not establish real-world
-safety. Hardware deployment still requires target timing and memory evidence,
-airframe/model validation, estimator-reset testing, robustness margins, and
-staged physical testing. The full-state path deliberately remains POSIX/SITL
-only.
+safety. PX4 hardware validation is ongoing work and still requires target
+timing and memory evidence, airframe/model validation, estimator-reset testing,
+robustness margins, and staged physical testing. The full-state path
+deliberately remains POSIX/SITL only.
 
 ## License and citation
 
