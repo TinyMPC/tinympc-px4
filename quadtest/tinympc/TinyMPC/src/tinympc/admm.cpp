@@ -1,9 +1,33 @@
-#include <iostream>
-
 #include "admm.hpp"
-#include "rho_benchmark.hpp"    
+#ifndef TINY_DISABLE_ADAPTIVE_RHO
+#include "rho_benchmark.hpp"
+#endif
 
 #define DEBUG_MODULE "TINYALG"
+
+namespace {
+
+template<typename Derived>
+void project_soc_in_place(Derived cone, tinytype mu)
+{
+    const int axial_index = cone.rows() - 1;
+    const tinytype axial = cone(axial_index, 0) * mu;
+    const tinytype radial_norm = cone.topRows(axial_index).norm();
+
+    if (radial_norm <= -axial) {
+        cone.setZero();
+    } else if (radial_norm <= axial) {
+        return;
+    } else if (radial_norm >= std::abs(axial)) {
+        const tinytype scale = 0.5 * (1.0 + axial / radial_norm);
+        cone.topRows(axial_index) *= scale;
+        cone(axial_index, 0) = scale * radial_norm / mu;
+    } else {
+        cone.setZero();
+    }
+}
+
+} // namespace
 
 extern "C" {
 
@@ -14,8 +38,18 @@ void backward_pass_grad(TinySolver *solver)
 {
     for (int i = solver->work->N - 2; i >= 0; i--)
     {
-        (solver->work->d.col(i)).noalias() = solver->cache->Quu_inv * (solver->work->Bdyn.transpose() * solver->work->p.col(i + 1) + solver->work->r.col(i) + solver->cache->BPf);
-        (solver->work->p.col(i)).noalias() = solver->work->q.col(i) + solver->cache->AmBKt.lazyProduct(solver->work->p.col(i + 1)) - (solver->cache->Kinf.transpose()).lazyProduct(solver->work->r.col(i)) + solver->cache->APf; 
+        solver->work->Qu.noalias() =
+            solver->work->Bdyn.transpose() * solver->work->p.col(i + 1);
+        solver->work->Qu += solver->work->r.col(i) + solver->cache->BPf;
+        solver->work->d.col(i).noalias() =
+            solver->cache->Quu_inv * solver->work->Qu;
+
+        solver->work->Qx.noalias() =
+            solver->cache->AmBKt * solver->work->p.col(i + 1);
+        solver->work->Qx.noalias() -=
+            solver->cache->Kinf.transpose() * solver->work->r.col(i);
+        solver->work->Qx += solver->work->q.col(i) + solver->cache->APf;
+        solver->work->p.col(i) = solver->work->Qx;
     }
 }
 
@@ -26,8 +60,16 @@ void forward_pass(TinySolver *solver)
 {
     for (int i = 0; i < solver->work->N - 1; i++)
     {
-        (solver->work->u.col(i)).noalias() = -solver->cache->Kinf.lazyProduct(solver->work->x.col(i)) - solver->work->d.col(i);
-        (solver->work->x.col(i + 1)).noalias() = solver->work->Adyn.lazyProduct(solver->work->x.col(i)) + solver->work->Bdyn.lazyProduct(solver->work->u.col(i)) + solver->work->fdyn;
+        solver->work->Qu.noalias() =
+            solver->cache->Kinf * solver->work->x.col(i);
+        solver->work->u.col(i) = -solver->work->Qu - solver->work->d.col(i);
+
+        solver->work->Qx.noalias() =
+            solver->work->Adyn * solver->work->x.col(i);
+        solver->work->Qx.noalias() +=
+            solver->work->Bdyn * solver->work->u.col(i);
+        solver->work->Qx += solver->work->fdyn;
+        solver->work->x.col(i + 1) = solver->work->Qx;
     }
 }
 
@@ -120,8 +162,8 @@ void update_slack(TinySolver *solver)
                 int start = solver->work->Acx(k);
                 int num_xs = solver->work->qcx(k);
                 tinytype mu = solver->work->cx(k);
-                tinyVector col = solver->work->vcnew.block(start, i, num_xs, 1);
-                solver->work->vcnew.block(start, i, num_xs, 1) = project_soc(col, mu);
+                project_soc_in_place(
+                    solver->work->vcnew.block(start, i, num_xs, 1), mu);
             }
         }
     }
@@ -135,8 +177,7 @@ void update_slack(TinySolver *solver)
                 tinytype mu = solver->work->cu(k);
                 tinyMatrix& slack = separate_input_soc
                     ? solver->work->zcnew : solver->work->znew;
-                tinyVector col = slack.block(start, i, num_us, 1);
-                slack.block(start, i, num_us, 1) = project_soc(col, mu);
+                project_soc_in_place(slack.block(start, i, num_us, 1), mu);
             }
         }
     }
@@ -154,12 +195,12 @@ void update_slack(TinySolver *solver)
                 const int start = solver->work->Acu(k);
                 const int num_us = solver->work->qcu(k);
                 const tinytype mu = solver->work->cu(k);
-                tinyVector cone = solver->work->znew.block(start, i, num_us, 1);
-                const tinytype radial_norm = cone.head(num_us - 1).norm();
+                auto cone = solver->work->znew.block(start, i, num_us, 1);
+                const tinytype radial_norm = cone.topRows(num_us - 1).norm();
                 const tinytype radial_limit = std::max<tinytype>(
-                    0.0, mu * cone(num_us - 1));
+                    0.0, mu * cone(num_us - 1, 0));
                 if (radial_norm > radial_limit && radial_norm > 0.0) {
-                    cone.head(num_us - 1) *= radial_limit / radial_norm;
+                    cone.topRows(num_us - 1) *= radial_limit / radial_norm;
                 }
                 solver->work->znew.block(start, i, num_us, 1) = cone;
             }
@@ -180,11 +221,12 @@ void update_slack(TinySolver *solver)
     if (solver->settings->en_state_linear) {
         for (int i=0; i<solver->work->N; i++) {
             for (int k=0; k<solver->work->numStateLinear; k++) {
-                tinyVector a = solver->work->Alin_x.row(k);
+                auto a = solver->work->Alin_x.row(k);
                 tinytype b = solver->work->blin_x(k);
                 tinytype constraint_value = a.dot(solver->work->vlnew.col(i));
                 if (constraint_value > b) {  // Only project if constraint is violated
-                    solver->work->vlnew.col(i) = project_hyperplane(solver->work->vlnew.col(i), a, b);
+                    solver->work->vlnew.col(i).noalias() -=
+                        ((constraint_value - b) / a.squaredNorm()) * a.transpose();
                 }
             }
         }
@@ -194,11 +236,12 @@ void update_slack(TinySolver *solver)
     if (solver->settings->en_input_linear) {
         for (int i=0; i<solver->work->N-1; i++) {
             for (int k=0; k<solver->work->numInputLinear; k++) {
-                tinyVector a = solver->work->Alin_u.row(k);
+                auto a = solver->work->Alin_u.row(k);
                 tinytype b = solver->work->blin_u(k);
                 tinytype constraint_value = a.dot(solver->work->zlnew.col(i));
                 if (constraint_value > b) {  // Only project if constraint is violated
-                    solver->work->zlnew.col(i) = project_hyperplane(solver->work->zlnew.col(i), a, b);
+                    solver->work->zlnew.col(i).noalias() -=
+                        ((constraint_value - b) / a.squaredNorm()) * a.transpose();
                 }
             }
         }
@@ -331,6 +374,7 @@ int solve(TinySolver *solver)
     solver->work->status = 11; // TINY_UNSOLVED
     solver->work->iter = 0;
 
+#ifndef TINY_DISABLE_ADAPTIVE_RHO
     // Setup for adaptive rho
     RhoAdapter adapter;
     adapter.rho_min = solver->settings->adaptive_rho_min;
@@ -338,11 +382,8 @@ int solve(TinySolver *solver)
     adapter.clip = solver->settings->adaptive_rho_enable_clipping;
     
     RhoBenchmarkResult rho_result;
+#endif
 
-    // Store previous values for residuals
-    tinyMatrix v_prev = solver->work->vnew;
-    tinyMatrix z_prev = solver->work->znew;
-    
     // Initialize linear constraint slack variables if needed
     if (solver->settings->en_state_linear) {
         solver->work->vlnew = solver->work->x;
@@ -350,6 +391,19 @@ int solve(TinySolver *solver)
     
     if (solver->settings->en_input_linear) {
         solver->work->zlnew = solver->work->u;
+    }
+
+    // The previous-slack workspaces also carry warm starts between calls.
+    // Synchronize them before the first iteration so residuals compare
+    // against the actual incoming warm start rather than an older iterate.
+    solver->work->v = solver->work->vnew;
+    solver->work->z = solver->work->znew;
+    if (solver->settings->en_state_soc && solver->work->numStateCones > 0) {
+        solver->work->vc = solver->work->vcnew;
+    }
+    if (solver->settings->en_input_soc && solver->settings->en_input_bound &&
+        solver->work->numInputCones > 0) {
+        solver->work->zc = solver->work->zcnew;
     }
 
     for (int i = 0; i < solver->settings->max_iter; i++)
@@ -370,13 +424,16 @@ int solve(TinySolver *solver)
 
         solver->work->iter += 1;
 
+#ifndef TINY_DISABLE_ADAPTIVE_RHO
         // Handle adaptive rho if enabled
         if (solver->settings->adaptive_rho) {
             // Calculate residuals for adaptive rho
             tinytype pri_res_input = (solver->work->u - solver->work->znew).cwiseAbs().maxCoeff();
             tinytype pri_res_state = (solver->work->x - solver->work->vnew).cwiseAbs().maxCoeff();
-            tinytype dua_res_input = solver->cache->rho * (solver->work->znew - z_prev).cwiseAbs().maxCoeff();
-            tinytype dua_res_state = solver->cache->rho * (solver->work->vnew - v_prev).cwiseAbs().maxCoeff();
+            tinytype dua_res_input = solver->cache->rho *
+                (solver->work->znew - solver->work->z).cwiseAbs().maxCoeff();
+            tinytype dua_res_state = solver->cache->rho *
+                (solver->work->vnew - solver->work->v).cwiseAbs().maxCoeff();
 
             // Update rho every 5 iterations
             if (i > 0 && i % 5 == 0) {
@@ -398,11 +455,8 @@ int solve(TinySolver *solver)
                 update_matrices_with_derivatives(solver->cache, rho_result.final_rho);
             }
         }
+#endif
             
-        // Store previous values for next iteration
-        z_prev = solver->work->znew;
-        v_prev = solver->work->vnew;
-
         // Check for whether cost is minimized by calculating residuals
         if (termination_condition(solver)) {
             solver->work->status = 1; // TINY_SOLVED

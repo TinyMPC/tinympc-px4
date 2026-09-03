@@ -15,5 +15,7 @@ jobs:
         run: ./scripts/setup_tinympc_px4.sh
       - name: Run deterministic constraint benchmarks
         run: ./scripts/run_constraint_benchmarks.sh
+      - name: Assert allocation-free runtime path
+        run: ./scripts/check_no_runtime_allocation.sh
       - name: Run full-state actuator-envelope benchmark
         run: ./scripts/run_full_state_benchmark.sh

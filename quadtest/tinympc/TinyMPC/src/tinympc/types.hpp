@@ -12,7 +12,11 @@ using namespace Eigen;
 extern "C" {
 #endif
 
+#ifdef TINY_MPC_SINGLE_PRECISION
+typedef float tinytype;
+#else
 typedef double tinytype;  // should be double if you want to generate code
+#endif
 typedef Matrix<tinytype, Dynamic, Dynamic> tinyMatrix;
 typedef Matrix<tinytype, Dynamic, 1> tinyVector;
 
@@ -174,6 +178,7 @@ typedef struct {
 
     // Temporaries
     tinyVector Qu;      // nu x 1
+    tinyVector Qx;      // nx x 1
 
 
 

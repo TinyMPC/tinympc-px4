@@ -1,5 +1,5 @@
 /*
- * Matched, no-disturbance PX4 SITL comparison.
+ * Native TinyMPC acceleration-level PX4 integration.
  *
  * mpc: PX4 EKF -> TinyMPC position/velocity MPC -> acceleration setpoint ->
  *      PX4 attitude/rate controllers -> PX4 control allocation -> motors.
@@ -7,8 +7,9 @@
  *      -> the same PX4 attitude/rate/allocation stack. pid_tuned additionally
  *      verifies the gain set used by the published fair comparison.
  *
- * Both modes receive the same time-parameterized chicane and use the same
- * vehicle and 15-degree tilt limit. The module never publishes motor commands.
+ * The monitor and hold modes provide a staged hardware-validation path before
+ * the time-parameterized chicane is enabled. The module never publishes motor
+ * commands and never replaces PX4 commander, failsafes, or inner loops.
  */
 
 #include <drivers/drv_hrt.h>
@@ -35,7 +36,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <ctime>
 
 namespace
 {
@@ -60,6 +60,8 @@ enum ControllerMode {
 	ModeMpc = 0,
 	ModePid = 1,
 	ModePidTuned = 2,
+	ModeHold = 3,
+	ModeMonitor = 4,
 };
 
 enum FailureReason {
@@ -77,7 +79,7 @@ struct SharedStatus {
 	volatile bool ready{false};
 	volatile bool engaged{false};
 	volatile bool failed{false};
-	volatile int mode{ModeMpc};
+	volatile int mode{ModeMonitor};
 	volatile int failure_reason{FailureNone};
 	volatile float course_time{0.f};
 	volatile float corridor_violation{0.f};
@@ -85,23 +87,21 @@ struct SharedStatus {
 	volatile float last_solve_us{0.f};
 	volatile float maximum_solve_us{0.f};
 	volatile uint64_t solve_count{0};
+	volatile uint64_t deadline_miss_count{0};
+	volatile int solve_policy{TINY_MPC_SOLVE_INVALID};
+	volatile int iterations{0};
+	volatile float primal_residual{0.f};
+	volatile float dual_residual{0.f};
 };
 
 volatile bool g_should_exit{false};
 px4_task_t g_task_id{-1};
-int g_requested_mode{ModeMpc};
+int g_requested_mode{ModeMonitor};
 SharedStatus g_status{};
 
 uint64_t monotonic_wall_time_us()
 {
-	struct timespec value {};
-
-	if (::clock_gettime(CLOCK_MONOTONIC_RAW, &value) != 0) {
-		return 0;
-	}
-
-	return static_cast<uint64_t>(value.tv_sec) * 1000000ULL +
-	       static_cast<uint64_t>(value.tv_nsec) / 1000ULL;
+	return hrt_absolute_time();
 }
 
 bool finite(float value)
@@ -138,6 +138,8 @@ const char *mode_name(int mode)
 	switch (mode) {
 	case ModePid: return "px4_pid";
 	case ModePidTuned: return "px4_pid_tuned";
+	case ModeHold: return "tinympc_hold";
+	case ModeMonitor: return "tinympc_monitor";
 	default: return "tinympc";
 	}
 }
@@ -163,12 +165,27 @@ public:
 
 	bool init()
 	{
-		int32_t autostart = -1;
+		vehicle_status_s status{};
+		if (!_vehicle_status_sub.copy(&status) ||
+		    status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) {
+			PX4_ERR("module must be initialized while the vehicle is disarmed");
+			g_status.failed = true;
+			g_status.failure_reason = FailureConfiguration;
+			return false;
+		}
 
-		if (!read_int_param("SYS_AUTOSTART", autostart) ||
-		    (autostart != 4001 && autostart != 4002 &&
-		     autostart != 4005 && autostart != 4010)) {
-			PX4_ERR("requires a Gazebo X500 multirotor airframe");
+		int32_t autostart = -1;
+		const bool autostart_read = read_int_param("SYS_AUTOSTART", autostart);
+#if defined(__PX4_NUTTX)
+		const bool airframe_supported = autostart_read && autostart == 4001;
+#else
+		const bool airframe_supported = autostart_read &&
+			(autostart == 4001 || autostart == 4002 ||
+			 autostart == 4005 || autostart == 4010);
+#endif
+
+		if (!airframe_supported) {
+			PX4_ERR("requires an explicitly supported quadrotor airframe");
 			g_status.failed = true;
 			g_status.failure_reason = FailureConfiguration;
 			return false;
@@ -195,7 +212,11 @@ public:
 		MPC_Init();
 		MPC_Reset();
 		g_status.ready = true;
-		PX4_INFO("ready: mode=%s; take off, then switch to Offboard", mode_name(_mode));
+		if (_mode == ModeMonitor) {
+			PX4_INFO("ready: monitor only; no heartbeat or setpoint publication");
+		} else {
+			PX4_INFO("ready: mode=%s; take off, then switch to Offboard", mode_name(_mode));
+		}
 		return true;
 	}
 
@@ -252,10 +273,14 @@ private:
 
 	void publish_offboard_heartbeat(uint64_t now)
 	{
+		if (_mode == ModeMonitor) {
+			return;
+		}
+
 		offboard_control_mode_s control_mode{};
 		control_mode.timestamp = now;
 
-		if (_mode != ModeMpc) {
+		if (_mode == ModePid || _mode == ModePidTuned) {
 			control_mode.position = true;
 		} else {
 			control_mode.acceleration = true;
@@ -326,10 +351,12 @@ private:
 		setpoint.yawspeed = 0.f;
 	}
 
-	bool publish_mpc_setpoint(uint64_t now,
-				  const vehicle_local_position_s &local,
-				  const vehicle_attitude_s &attitude,
-				  float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT])
+	bool run_mpc(uint64_t now,
+		     const vehicle_local_position_s &local,
+		     const vehicle_attitude_s &attitude,
+		     int scenario,
+		     bool publish_setpoint,
+		     float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT])
 	{
 		float state[12]{};
 		state[0] = local.x;
@@ -342,7 +369,7 @@ private:
 		float control[4]{};
 		float plan[12]{};
 		const uint64_t solve_start = monotonic_wall_time_us();
-		MPC_Step_Scenario(state, TINY_MPC_SCENARIO_CHICANE_SOC,
+		MPC_Step_Scenario(state, scenario,
 				  control, plan, diagnostics);
 		const uint64_t solve_end = monotonic_wall_time_us();
 		const uint64_t elapsed = solve_start > 0 && solve_end >= solve_start ?
@@ -352,8 +379,13 @@ private:
 		g_status.maximum_solve_us = elapsed_float > g_status.maximum_solve_us ?
 					    elapsed_float : g_status.maximum_solve_us;
 		++g_status.solve_count;
+		g_status.solve_policy = static_cast<int>(diagnostics[TINY_MPC_DIAG_POLICY]);
+		g_status.iterations = static_cast<int>(diagnostics[TINY_MPC_DIAG_ITERATIONS]);
+		g_status.primal_residual = diagnostics[TINY_MPC_DIAG_PRIMAL_RESIDUAL];
+		g_status.dual_residual = diagnostics[TINY_MPC_DIAG_DUAL_RESIDUAL];
 
 		if (elapsed > kSolveDeadlineUs) {
+			++g_status.deadline_miss_count;
 			g_status.failure_reason = FailureDeadline;
 			return false;
 		}
@@ -377,13 +409,15 @@ private:
 			return false;
 		}
 
-		trajectory_setpoint_s setpoint{};
-		empty_setpoint(setpoint, now);
-		setpoint.acceleration[0] = control[0];
-		setpoint.acceleration[1] = control[1];
-		setpoint.acceleration[2] = control[2];
-		setpoint.yawspeed = control[3];
-		_trajectory_setpoint_pub.publish(setpoint);
+		if (publish_setpoint) {
+			trajectory_setpoint_s setpoint{};
+			empty_setpoint(setpoint, now);
+			setpoint.acceleration[0] = control[0];
+			setpoint.acceleration[1] = control[1];
+			setpoint.acceleration[2] = control[2];
+			setpoint.yawspeed = control[3];
+			_trajectory_setpoint_pub.publish(setpoint);
+		}
 		return true;
 	}
 
@@ -405,8 +439,11 @@ private:
 	void publish_debug(uint64_t now, float relative_x, float relative_y,
 			   const float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT])
 	{
-		const tinympc_chicane::Sample reference =
-			tinympc_chicane::sample(static_cast<double>(_course_time));
+		const bool chicane_mode = _mode == ModeMpc || _mode == ModePid ||
+			_mode == ModePidTuned;
+		const tinympc_chicane::Sample reference = chicane_mode ?
+			tinympc_chicane::sample(static_cast<double>(_course_time)) :
+			tinympc_chicane::Sample{};
 		debug_array_s debug{};
 		debug.timestamp = now;
 		debug.id = 43;
@@ -420,6 +457,7 @@ private:
 		debug.data[6] = g_status.corridor_violation;
 		debug.data[7] = _maximum_corridor_violation;
 		debug.data[8] = g_status.last_solve_us;
+		debug.data[9] = static_cast<float>(g_status.deadline_miss_count);
 
 		for (int i = 0; i < TINY_MPC_DIAGNOSTIC_COUNT; ++i) {
 			debug.data[10 + i] = diagnostics[i];
@@ -478,6 +516,29 @@ private:
 		}
 
 		g_status.ready = true;
+
+		if (_mode == ModeMonitor) {
+			if (!_monitor_initialized) {
+				_origin_x = local.x;
+				_origin_y = local.y;
+				_origin_z = local.z;
+				_origin_yaw = yaw_from_attitude(attitude);
+				MPC_Reset();
+				_monitor_initialized = true;
+			}
+
+			float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT]{};
+			if (!run_mpc(now, local, attitude,
+				     TINY_MPC_SCENARIO_POSITION_HOLD, false, diagnostics)) {
+				g_status.failed = true;
+				PX4_ERR("monitor solve failed: %s", failure_name(g_status.failure_reason));
+				return;
+			}
+
+			publish_debug(now, local.x - _origin_x, local.y - _origin_y, diagnostics);
+			return;
+		}
+
 		publish_offboard_heartbeat(now);
 		const bool armed = status.arming_state == vehicle_status_s::ARMING_STATE_ARMED;
 		const bool offboard = status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
@@ -500,15 +561,20 @@ private:
 
 		const float relative_x = local.x - _origin_x;
 		const float relative_y = local.y - _origin_y;
-		const float corridor_violation = static_cast<float>(
-			tinympc_chicane::corridorViolation(relative_x, relative_y));
+		const bool chicane_mode = _mode == ModeMpc || _mode == ModePid ||
+			_mode == ModePidTuned;
+		const float corridor_violation = chicane_mode ? static_cast<float>(
+			tinympc_chicane::corridorViolation(relative_x, relative_y)) : 0.f;
 		_maximum_corridor_violation = std::max(_maximum_corridor_violation,
 							 corridor_violation);
 		g_status.course_time = _course_time;
 		g_status.corridor_violation = corridor_violation;
 		g_status.maximum_corridor_violation = _maximum_corridor_violation;
 
+		const bool hold_position_exceeded = _mode == ModeHold &&
+			std::hypot(relative_x, relative_y) > 0.75f;
 		if (corridor_violation > kMaximumCorridorDeparture ||
+		    hold_position_exceeded ||
 		    std::fabs(local.z - _origin_z) > kMaximumAltitudeError ||
 		    std::hypot(local.vx, local.vy) > kMaximumHorizontalSpeed) {
 			request_loiter(FailureStateEnvelope);
@@ -517,8 +583,10 @@ private:
 
 		float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT]{};
 
-		if (_mode == ModeMpc) {
-			if (!publish_mpc_setpoint(now, local, attitude, diagnostics)) {
+		if (_mode == ModeMpc || _mode == ModeHold) {
+			const int scenario = _mode == ModeHold ?
+				TINY_MPC_SCENARIO_POSITION_HOLD : TINY_MPC_SCENARIO_CHICANE_SOC;
+			if (!run_mpc(now, local, attitude, scenario, true, diagnostics)) {
 				request_loiter(g_status.failure_reason);
 				return;
 			}
@@ -532,6 +600,7 @@ private:
 
 	int _mode;
 	bool _engaged{false};
+	bool _monitor_initialized{false};
 	bool _failover_command_sent{false};
 	float _origin_x{0.f};
 	float _origin_y{0.f};
@@ -576,8 +645,9 @@ int controller_thread_main(int argc, char *argv[])
 
 void print_usage()
 {
-	PX4_INFO("usage: tinympc_chicane {start [mpc|pid|pid_tuned]|stop|status}");
-	PX4_INFO("SITL only. Same chicane/no wind; PX4 MPC_TILTMAX_AIR must be 15.");
+	PX4_INFO("usage: tinympc_chicane {start [monitor|hold|mpc|pid|pid_tuned]|stop|status}");
+	PX4_INFO("default is monitor (solver runs, no Offboard heartbeat or setpoint)");
+	PX4_INFO("PX4 MPC_TILTMAX_AIR must be 15 degrees");
 }
 
 } // namespace
@@ -595,10 +665,14 @@ extern "C" __EXPORT int tinympc_chicane_main(int argc, char *argv[])
 			return PX4_OK;
 		}
 
-		g_requested_mode = ModeMpc;
+		g_requested_mode = ModeMonitor;
 
 		if (argc >= 3) {
-			if (std::strcmp(argv[2], "mpc") == 0) {
+			if (std::strcmp(argv[2], "monitor") == 0) {
+				g_requested_mode = ModeMonitor;
+			} else if (std::strcmp(argv[2], "hold") == 0) {
+				g_requested_mode = ModeHold;
+			} else if (std::strcmp(argv[2], "mpc") == 0) {
 				g_requested_mode = ModeMpc;
 			} else if (std::strcmp(argv[2], "pid") == 0) {
 				g_requested_mode = ModePid;
@@ -609,6 +683,15 @@ extern "C" __EXPORT int tinympc_chicane_main(int argc, char *argv[])
 				return PX4_ERROR;
 			}
 		}
+
+#if defined(__PX4_NUTTX)
+		// Keep the first hardware image staged: autonomous course modes remain
+		// SITL-only until monitor logs and props-off checks pass on the board.
+		if (g_requested_mode != ModeMonitor && g_requested_mode != ModeHold) {
+			PX4_ERR("hardware build permits only monitor or hold mode");
+			return PX4_ERROR;
+		}
+#endif
 
 		g_should_exit = false;
 		g_task_id = px4_task_spawn_cmd("tinympc_chicane",
@@ -640,6 +723,10 @@ extern "C" __EXPORT int tinympc_chicane_main(int argc, char *argv[])
 			 (double)g_status.maximum_corridor_violation,
 			 static_cast<unsigned long long>(g_status.solve_count),
 			 (double)g_status.last_solve_us, (double)g_status.maximum_solve_us);
+		PX4_INFO("policy=%d iter=%d residual=[%.3g %.3g] deadline_misses=%llu",
+			 g_status.solve_policy, g_status.iterations,
+			 (double)g_status.primal_residual, (double)g_status.dual_residual,
+			 static_cast<unsigned long long>(g_status.deadline_miss_count));
 		return PX4_OK;
 	}
 

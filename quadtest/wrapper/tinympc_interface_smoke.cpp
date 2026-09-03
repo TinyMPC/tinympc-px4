@@ -61,5 +61,24 @@ int main()
                 diagnostics[TINY_MPC_DIAG_ITERATIONS],
                 diagnostics[TINY_MPC_DIAG_PRIMAL_RESIDUAL],
                 diagnostics[TINY_MPC_DIAG_DUAL_RESIDUAL]);
+
+    MPC_Reset();
+    for (float &value : x) {
+        value = 0.0f;
+    }
+    MPC_Step_Scenario(x, TINY_MPC_SCENARIO_POSITION_HOLD,
+                      u, xplan, diagnostics);
+    x[0] = 0.20f;
+    x[6] = 0.10f;
+    MPC_Step_Scenario(x, TINY_MPC_SCENARIO_POSITION_HOLD,
+                      u, xplan, diagnostics);
+    if (diagnostics[TINY_MPC_DIAG_POLICY] < TINY_MPC_SOLVE_CONVERGED ||
+        u[0] >= 0.0f || std::fabs(u[0]) > 2.001f) {
+        std::fprintf(stderr,
+                     "Smoke test failed: position-hold recovery policy=%g ax=%g.\n",
+                     diagnostics[TINY_MPC_DIAG_POLICY], u[0]);
+        return 1;
+    }
+    std::printf("Position hold passed: recovery ax=%f.\n", u[0]);
     return 0;
 }

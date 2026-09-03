@@ -55,6 +55,15 @@ Build the native external modules against the pinned PX4 release:
 ./scripts/build_px4_sitl.sh
 ```
 
+Cross-build the staged Pixhawk 6X image (build only; no upload):
+
+```bash
+./scripts/build_pixhawk6x.sh
+```
+
+The hardware image defaults to a passive solver-monitor mode and blocks the
+moving course modes. See the [6X port and staged validation checklist](docs/pixhawk6x_port.md).
+
 The two matched chicane modes are:
 
 ```text
@@ -90,13 +99,14 @@ Recorded demonstrations:
 - [Constraint definitions and solver policy](docs/constraint_examples.md)
 - [Matched TinyMPC versus tuned PX4 experiment](docs/chicane_px4_comparison.md)
 - [Full-state actuator-envelope experiment](docs/full_state_actuator_constraints.md)
+- [Pixhawk 6X build and staged validation](docs/pixhawk6x_port.md)
 - [Research direction and remaining validation](docs/research_direction.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Requirements
 
 - Ubuntu 22.04, CMake, Ninja, and a C++17 compiler for native tests
-- PX4 v1.15.3 toolchain for SITL
+- PX4 v1.15.3 toolchain for SITL and the ARM toolchain for Pixhawk 6X
 - Gazebo Harmonic for flight reproduction
 - Python, `pyulog`, NumPy, Matplotlib, and FFmpeg for telemetry rendering
 

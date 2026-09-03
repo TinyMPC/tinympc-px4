@@ -13,7 +13,10 @@ enum TinyMpcScenario {
     TINY_MPC_SCENARIO_WALL_UNCONSTRAINED = 4,
     TINY_MPC_SCENARIO_FIGURE_EIGHT_SOC = 5,
     TINY_MPC_SCENARIO_FIGURE_EIGHT_BOX = 6,
-    TINY_MPC_SCENARIO_CHICANE_SOC = 7
+    TINY_MPC_SCENARIO_CHICANE_SOC = 7,
+    /* Hold the engagement-relative position. This deliberately differs from
+     * the legacy hover scenario, which commands a one-metre climb. */
+    TINY_MPC_SCENARIO_POSITION_HOLD = 8
 };
 
 enum TinyMpcSolvePolicy {

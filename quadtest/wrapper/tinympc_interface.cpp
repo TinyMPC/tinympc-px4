@@ -182,7 +182,7 @@ void resetWarmStart(TinySolver* solver)
 int sanitizeScenario(int scenario)
 {
     if (scenario < TINY_MPC_SCENARIO_HOVER ||
-        scenario > TINY_MPC_SCENARIO_CHICANE_SOC) {
+        scenario > TINY_MPC_SCENARIO_POSITION_HOLD) {
         return TINY_MPC_SCENARIO_HOVER;
     }
     return scenario;
@@ -226,7 +226,9 @@ void configureScenario(int scenario,
 {
     reference = g_origin;
     reference.segment<6>(6).setZero();
-    reference(2) = g_origin(2) - 1.0;
+    if (scenario != TINY_MPC_SCENARIO_POSITION_HOLD) {
+        reference(2) = g_origin(2) - 1.0;
+    }
 
     stateLower.setConstant(-kUnbounded);
     stateUpper.setConstant(kUnbounded);
@@ -235,7 +237,20 @@ void configureScenario(int scenario,
     tinytype accelZ = kDefaultAccelLimit;
     tinytype yawRate = kDefaultYawRateLimit;
 
-    if (scenario != TINY_MPC_SCENARIO_WALL_UNCONSTRAINED) {
+    if (scenario == TINY_MPC_SCENARIO_POSITION_HOLD) {
+        setStateBox(stateLower, stateUpper, 0,
+                    g_origin(0) - 0.50, g_origin(0) + 0.50);
+        setStateBox(stateLower, stateUpper, 1,
+                    g_origin(1) - 0.50, g_origin(1) + 0.50);
+        setStateBox(stateLower, stateUpper, 2,
+                    g_origin(2) - 0.40, g_origin(2) + 0.40);
+        setStateBox(stateLower, stateUpper, 6, -1.0, 1.0);
+        setStateBox(stateLower, stateUpper, 7, -1.0, 1.0);
+        setStateBox(stateLower, stateUpper, 8, -0.75, 0.75);
+        accelXY = 2.0;
+        accelZ = 2.0;
+        yawRate = 0.5;
+    } else if (scenario != TINY_MPC_SCENARIO_WALL_UNCONSTRAINED) {
         setStateBox(stateLower, stateUpper, 2,
                     g_origin(2) - 1.5, g_origin(2) + 0.25);
         setStateBox(stateLower, stateUpper, 8, -1.0, 1.0);
@@ -277,6 +292,9 @@ void configureScenario(int scenario,
 
     case TINY_MPC_SCENARIO_WALL_UNCONSTRAINED:
         reference(0) = g_origin(0) + 0.85;
+        break;
+
+    case TINY_MPC_SCENARIO_POSITION_HOLD:
         break;
 
     case TINY_MPC_SCENARIO_HOVER:
@@ -497,9 +515,10 @@ InputVector chicaneFallback(const StateVector& state)
     return fallback;
 }
 
-tinytype maximumViolation(const tinyMatrix& values,
-                          const tinyMatrix& lower,
-                          const tinyMatrix& upper)
+template<typename ValuesDerived, typename LowerDerived, typename UpperDerived>
+tinytype maximumViolation(const MatrixBase<ValuesDerived>& values,
+                          const MatrixBase<LowerDerived>& lower,
+                          const MatrixBase<UpperDerived>& upper)
 {
     const tinytype lowerViolation = (lower - values).maxCoeff();
     const tinytype upperViolation = (values - upper).maxCoeff();
@@ -548,20 +567,24 @@ bool solveTrajectory(TinySolver* solver,
                      tinytype& stateViolation,
                      tinytype& inputViolation)
 {
-    int apiStatus = 0;
-    apiStatus |= tiny_set_x0(solver, x0);
-    apiStatus |= tiny_set_x_ref(solver, referenceHorizon);
-    apiStatus |= tiny_set_bound_constraints(solver,
-                                            stateLower,
-                                            stateUpper,
-                                            inputLower,
-                                            inputUpper);
-    if (apiStatus != 0) {
-        solveStatus = apiStatus;
+    if (solver == nullptr || solver->work == nullptr ||
+        solver->work->nx != kNumStates || solver->work->nu != kNumInputs ||
+        solver->work->N != kHorizon) {
+        solveStatus = 1;
         stateViolation = kUnbounded;
         inputViolation = kUnbounded;
         return false;
     }
+
+    // These matrices are sized once during MPC_Init. Assigning equal-sized
+    // fixed matrices here avoids the by-value API copies that otherwise
+    // allocate temporary dynamic matrices inside the 50 Hz solve path.
+    solver->work->x.col(0) = x0;
+    solver->work->Xref = referenceHorizon;
+    solver->work->x_min = stateLower;
+    solver->work->x_max = stateUpper;
+    solver->work->u_min = inputLower;
+    solver->work->u_max = inputUpper;
 
     solver->settings->en_input_bound = enforceInputCone ? 0 : 1;
     solver->settings->en_input_soc = enforceInputCone ? 1 : 0;
@@ -600,6 +623,7 @@ bool solveReference(const StateVector& x0,
                            stateViolation, inputViolation);
 }
 
+#ifndef TINY_MPC_HARDWARE_HOLD_ONLY
 void initFigureEightSolver()
 {
     if (g_figure_solver != nullptr) {
@@ -666,13 +690,109 @@ void initFigureEightSolver()
     tiny_set_u_ref(g_figure_solver, inputReference);
     g_figure_last_input << 0.0, 0.0, kGravity, 0.0;
 }
+#endif
 
 } // namespace
+
+#ifdef TINY_MPC_USE_STATIC_CACHE
+extern "C" int tiny_load_static_cache(TinyCache *cache)
+{
+    if (cache == nullptr) {
+        return 1;
+    }
+
+    // Generated offline from the exact 12-state acceleration model, Q/R,
+    // dt=0.02 s, and rho=5 used by MPC_Init. Arrays use Eigen's native
+    // column-major order. Keeping Riccati precomputation off the flight image
+    // saves flash and makes initialization time deterministic.
+    static const tinytype kKinf[] = {
+        3.070785522f, 0.0f, 0.0f, 0.0f, 0.0f, 3.070785522f,
+        0.0f, 0.0f, 0.0f, 0.0f, 3.693045139f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.153985381f,
+        2.878289461f, 0.0f, 0.0f, 0.0f, 0.0f, 2.878289461f,
+        0.0f, 0.0f, 0.0f, 0.0f, 3.153296471f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f
+    };
+    static const tinytype kPinf[] = {
+        5155.065918f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        1739.382812f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 5155.065918f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1739.382812f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 6830.713379f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 2097.88208f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 2005.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 2005.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 649.6920166f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        1739.382935f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        1625.453125f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1739.382935f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1625.453125f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 2097.881836f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1785.29187f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 2005.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 2005.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 2005.0f
+    };
+    static const tinytype kQuuInv[] = {
+        0.08573165536f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.08573165536f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.08524297178f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.08881091326f
+    };
+    static const tinytype kAmBKt[] = {
+        0.9993858337f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.01942434162f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.9993858337f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.01942434162f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.9992613792f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.01936933957f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.9769203067f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        -0.06141570956f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.9424341917f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, -0.06141570956f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.9424341917f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, -0.07386089861f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.9369340539f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f
+    };
+
+    cache->rho = 5.0f;
+    cache->Kinf = Map<const tinyMatrix>(kKinf, kNumInputs, kNumStates);
+    cache->Pinf = Map<const tinyMatrix>(kPinf, kNumStates, kNumStates);
+    cache->Quu_inv = Map<const tinyMatrix>(kQuuInv, kNumInputs, kNumInputs);
+    cache->AmBKt = Map<const tinyMatrix>(kAmBKt, kNumStates, kNumStates);
+    cache->APf = tinyVector::Zero(kNumStates);
+    cache->BPf = tinyVector::Zero(kNumInputs);
+    cache->C1 = cache->Quu_inv;
+    cache->C2 = cache->AmBKt;
+    return 0;
+}
+#endif
 
 void MPC_Init(void)
 {
     if (g_solver != nullptr) {
+#ifndef TINY_MPC_HARDWARE_HOLD_ONLY
         initFigureEightSolver();
+#endif
         return;
     }
 
@@ -704,7 +824,9 @@ void MPC_Init(void)
     g_solver->settings->check_termination = 1;
     tiny_set_x_ref(g_solver, StateTrajectory::Zero());
     tiny_set_u_ref(g_solver, InputTrajectory::Zero());
+#ifndef TINY_MPC_HARDWARE_HOLD_ONLY
     initFigureEightSolver();
+#endif
 }
 
 void MPC_Reset(void)
@@ -720,10 +842,14 @@ void MPC_Reset(void)
     g_origin.setZero();
     g_last_plan.setZero();
     g_last_input.setZero();
+#ifndef TINY_MPC_HARDWARE_HOLD_ONLY
     g_figure_last_plan.setZero();
     g_figure_last_input << 0.0, 0.0, kGravity, 0.0;
+#endif
     resetWarmStart(g_solver);
+#ifndef TINY_MPC_HARDWARE_HOLD_ONLY
     resetWarmStart(g_figure_solver);
+#endif
 }
 
 void MPC_Step_Scenario(const float x[12],
@@ -738,8 +864,13 @@ void MPC_Step_Scenario(const float x[12],
 
     const StateVector x0 = copyState(x);
     scenario = sanitizeScenario(scenario);
+#ifdef TINY_MPC_HARDWARE_HOLD_ONLY
+    scenario = TINY_MPC_SCENARIO_POSITION_HOLD;
+    TinySolver* selectedSolver = g_solver;
+#else
     TinySolver* selectedSolver = isCoupledTrajectoryScenario(scenario)
         ? g_figure_solver : g_solver;
+#endif
     if (selectedSolver == nullptr || !stateIsFinite(x0)) {
         InputVector safeInput = InputVector::Zero();
         if (isCoupledTrajectoryScenario(scenario)) {

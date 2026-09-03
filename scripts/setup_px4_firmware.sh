@@ -68,3 +68,5 @@ echo "That toolchain step uses sudo, installs system packages, and usually requi
 echo
 echo "For the repo-local SITL build path, run:"
 echo "  ./scripts/build_px4_sitl.sh"
+echo "For the Pixhawk 6X cross-build path, run:"
+echo "  ./scripts/build_pixhawk6x.sh"

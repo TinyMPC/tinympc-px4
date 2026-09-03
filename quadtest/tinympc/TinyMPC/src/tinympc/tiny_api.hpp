@@ -1,6 +1,5 @@
 #pragma once
 
-#include <iostream>
 #include "admm.hpp"
 
 #ifdef __cplusplus
@@ -10,6 +9,10 @@ extern "C" {
 int tiny_setup(TinySolver** solverp,
                 tinyMatrix Adyn, tinyMatrix Bdyn, tinyMatrix fdyn, tinyMatrix Q, tinyMatrix R, 
                 tinytype rho, int nx, int nu, int N, int verbose);
+#ifdef TINY_MPC_USE_STATIC_CACHE
+// Application-provided fixed-model cache used by embedded builds.
+int tiny_load_static_cache(TinyCache *cache);
+#endif
 int tiny_set_bound_constraints(TinySolver* solver,
                     tinyMatrix x_min, tinyMatrix x_max,
                     tinyMatrix u_min, tinyMatrix u_max);

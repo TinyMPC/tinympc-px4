@@ -1,0 +1,98 @@
+#pragma once
+
+// Minimal freestanding std::complex surface for the real-valued TinyMPC PX4
+// build. Eigen declares complex specializations even though this controller
+// never instantiates them. GCC's hosted <complex> pulls in locale/iostream
+// facilities that PX4/NuttX intentionally does not provide.
+
+#include <cmath>
+
+namespace std
+{
+
+template<typename T>
+class complex
+{
+public:
+	using value_type = T;
+
+	constexpr complex(const T &real_value = T(), const T &imag_value = T()) :
+		_real(real_value), _imag(imag_value) {}
+
+	template<typename U>
+	constexpr complex(const complex<U> &other) :
+		_real(static_cast<T>(other.real())), _imag(static_cast<T>(other.imag())) {}
+
+	constexpr T real() const { return _real; }
+	constexpr T imag() const { return _imag; }
+	void real(T value) { _real = value; }
+	void imag(T value) { _imag = value; }
+
+	complex &operator+=(const complex &other)
+	{
+		_real += other._real;
+		_imag += other._imag;
+		return *this;
+	}
+
+	complex &operator-=(const complex &other)
+	{
+		_real -= other._real;
+		_imag -= other._imag;
+		return *this;
+	}
+
+	complex &operator*=(const complex &other)
+	{
+		const T next_real = _real * other._real - _imag * other._imag;
+		_imag = _real * other._imag + _imag * other._real;
+		_real = next_real;
+		return *this;
+	}
+
+	complex &operator/=(const complex &other)
+	{
+		const T denominator = other._real * other._real + other._imag * other._imag;
+		const T next_real = (_real * other._real + _imag * other._imag) / denominator;
+		_imag = (_imag * other._real - _real * other._imag) / denominator;
+		_real = next_real;
+		return *this;
+	}
+
+	complex &operator+=(const T &value) { _real += value; return *this; }
+	complex &operator-=(const T &value) { _real -= value; return *this; }
+	complex &operator*=(const T &value) { _real *= value; _imag *= value; return *this; }
+	complex &operator/=(const T &value) { _real /= value; _imag /= value; return *this; }
+
+private:
+	T _real;
+	T _imag;
+};
+
+template<typename T> constexpr T real(const complex<T> &value) { return value.real(); }
+template<typename T> constexpr T imag(const complex<T> &value) { return value.imag(); }
+template<typename T> constexpr complex<T> conj(const complex<T> &value) { return {value.real(), -value.imag()}; }
+template<typename T> constexpr T norm(const complex<T> &value) { return value.real() * value.real() + value.imag() * value.imag(); }
+template<typename T> inline T abs(const complex<T> &value) { return std::sqrt(norm(value)); }
+template<typename T> inline T arg(const complex<T> &value) { return std::atan2(value.imag(), value.real()); }
+
+template<typename T> constexpr complex<T> operator+(complex<T> lhs, const complex<T> &rhs) { return lhs += rhs; }
+template<typename T> constexpr complex<T> operator-(complex<T> lhs, const complex<T> &rhs) { return lhs -= rhs; }
+template<typename T> constexpr complex<T> operator*(complex<T> lhs, const complex<T> &rhs) { return lhs *= rhs; }
+template<typename T> constexpr complex<T> operator/(complex<T> lhs, const complex<T> &rhs) { return lhs /= rhs; }
+template<typename T> constexpr complex<T> operator-(const complex<T> &value) { return {-value.real(), -value.imag()}; }
+template<typename T> constexpr complex<T> operator+(const complex<T> &value) { return value; }
+
+template<typename T> constexpr complex<T> operator+(complex<T> lhs, const T &rhs) { return lhs += rhs; }
+template<typename T> constexpr complex<T> operator-(complex<T> lhs, const T &rhs) { return lhs -= rhs; }
+template<typename T> constexpr complex<T> operator*(complex<T> lhs, const T &rhs) { return lhs *= rhs; }
+template<typename T> constexpr complex<T> operator/(complex<T> lhs, const T &rhs) { return lhs /= rhs; }
+template<typename T> constexpr complex<T> operator+(const T &lhs, complex<T> rhs) { return rhs += lhs; }
+template<typename T> constexpr complex<T> operator-(const T &lhs, const complex<T> &rhs) { return {lhs - rhs.real(), -rhs.imag()}; }
+template<typename T> constexpr complex<T> operator*(const T &lhs, complex<T> rhs) { return rhs *= lhs; }
+template<typename T> constexpr complex<T> operator/(const T &lhs, const complex<T> &rhs) { return complex<T>(lhs) /= rhs; }
+
+template<typename T> constexpr bool operator==(const complex<T> &lhs, const complex<T> &rhs) { return lhs.real() == rhs.real() && lhs.imag() == rhs.imag(); }
+template<typename T> constexpr bool operator!=(const complex<T> &lhs, const complex<T> &rhs) { return !(lhs == rhs); }
+
+} // namespace std

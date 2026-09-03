@@ -1,18 +1,27 @@
 #include "tiny_api.hpp"
 #include "tiny_api_constants.hpp"
 
+#ifndef __PX4_NUTTX
 #include <iostream>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 using namespace Eigen;
+#ifndef __PX4_NUTTX
 IOFormat TinyApiFmt(4, 0, ", ", "\n", "[", "]");
+#endif
 
-static int check_dimension(std::string matrix_name, std::string rows_or_columns, int actual, int expected) {
+static int check_dimension(const char *matrix_name, const char *rows_or_columns, int actual, int expected) {
     if (actual != expected) {
+#ifndef __PX4_NUTTX
         std::cout << matrix_name << " has " << actual << " " << rows_or_columns << ". Expected " << expected << "." << std::endl;
+#else
+        (void)matrix_name;
+        (void)rows_or_columns;
+#endif
         return 1;
     }
     return 0;
@@ -83,6 +92,13 @@ int tiny_setup(TinySolver** solverp,
     // Bound constraint dual variables
     work->g = tinyMatrix::Zero(nx, N);
     work->y = tinyMatrix::Zero(nu, N-1);
+
+    // Size all box-constraint storage during setup. Updating equal-sized
+    // bounds in the control loop must not trigger an Eigen heap allocation.
+    work->x_min = tinyMatrix::Zero(nx, N);
+    work->x_max = tinyMatrix::Zero(nx, N);
+    work->u_min = tinyMatrix::Zero(nu, N-1);
+    work->u_max = tinyMatrix::Zero(nu, N-1);
     
     // Cone constraint slack variables
     work->vc = tinyMatrix::Zero(nx, N);
@@ -114,6 +130,7 @@ int tiny_setup(TinySolver** solverp,
     work->Uref = tinyMatrix::Zero(nu, N-1);
 
     work->Qu = tinyVector::Zero(nu);
+    work->Qx = tinyVector::Zero(nx);
 
     work->primal_residual_state = 0;
     work->primal_residual_input = 0;
@@ -122,16 +139,23 @@ int tiny_setup(TinySolver** solverp,
     work->status = 0;
     work->iter = 0;
 
-    // Initialize cache
+    // Initialize cache. Embedded builds can supply generated Riccati data so
+    // matrix inversion and the iterative precomputation never enter firmware.
+#ifdef TINY_MPC_USE_STATIC_CACHE
+    status = tiny_load_static_cache(cache);
+#else
     status = tiny_precompute_and_set_cache(cache, Adyn, Bdyn, fdyn, work->Q.asDiagonal(), work->R.asDiagonal(), nx, nu, rho, verbose);
+#endif
     if (status) {
         return status;
     }
 
+#ifndef TINY_DISABLE_ADAPTIVE_RHO
     // Initialize sensitivity matrices for adaptive rho
     if (solver->settings->adaptive_rho) {
         tiny_initialize_sensitivity_matrices(solver);
     }
+#endif
 
     return 0;
 }
@@ -140,7 +164,9 @@ int tiny_set_bound_constraints(TinySolver* solver,
                     tinyMatrix x_min, tinyMatrix x_max,
                     tinyMatrix u_min, tinyMatrix u_max) {
     if (!solver) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_set_bound_constraints: solver is nullptr" << std::endl;
+#endif
         return 1;
     }
 
@@ -167,7 +193,9 @@ int tiny_set_cone_constraints(TinySolver* solver,
                               VectorXi Acx, VectorXi qcx, tinyVector cx,
                               VectorXi Acu, VectorXi qcu, tinyVector cu) {
     if (!solver) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_set_cone_constraints: solver is nullptr" << std::endl;
+#endif
         return 1;
     }
 
@@ -201,7 +229,9 @@ int tiny_set_linear_constraints(TinySolver* solver,
                                tinyMatrix Alin_x, tinyVector blin_x,
                                tinyMatrix Alin_u, tinyVector blin_u) {
     if (!solver) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_set_linear_constraints: solver is nullptr" << std::endl;
+#endif
         return 1;
     }
 
@@ -246,7 +276,9 @@ int tiny_precompute_and_set_cache(TinyCache *cache,
                                   int nx, int nu, tinytype rho, int verbose) {
 
     if (!cache) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_precompute_and_set_cache: cache is nullptr" << std::endl;
+#endif
         return 1;
     }
 
@@ -256,11 +288,13 @@ int tiny_precompute_and_set_cache(TinyCache *cache,
 
     // Printing
     if (verbose) {
+#ifndef __PX4_NUTTX
         std::cout << "A = " << Adyn.format(TinyApiFmt) << std::endl;
         std::cout << "B = " << Bdyn.format(TinyApiFmt) << std::endl;
         std::cout << "Q = " << Q1.format(TinyApiFmt) << std::endl;
         std::cout << "R = " << R1.format(TinyApiFmt) << std::endl;
         std::cout << "rho = " << rho << std::endl;
+#endif
     }
 
     // Riccati recursion to get Kinf, Pinf
@@ -277,7 +311,9 @@ int tiny_precompute_and_set_cache(TinyCache *cache,
         if ((Kinf - Ktp1).cwiseAbs().maxCoeff() < 1e-5)
         {
             if (verbose) {
+#ifndef __PX4_NUTTX
                 std::cout << "Kinf converged after " << i + 1 << " iterations" << std::endl;
+#endif
             }
             break;
         }
@@ -294,6 +330,7 @@ int tiny_precompute_and_set_cache(TinyCache *cache,
     tinyVector BPf = Bdyn.transpose()*Pinf*fdyn;
 
     if (verbose) {
+#ifndef __PX4_NUTTX
         std::cout << "Kinf = " << Kinf.format(TinyApiFmt) << std::endl;
         std::cout << "Pinf = " << Pinf.format(TinyApiFmt) << std::endl;
         std::cout << "Quu_inv = " << Quu_inv.format(TinyApiFmt) << std::endl;
@@ -302,6 +339,7 @@ int tiny_precompute_and_set_cache(TinyCache *cache,
         std::cout << "BPf = " << BPf.format(TinyApiFmt) << std::endl;
 
         std::cout << "\nPrecomputation finished!\n" << std::endl;
+#endif
     }
 
     cache->rho = rho;
@@ -328,7 +366,9 @@ int tiny_update_settings(TinySettings* settings, tinytype abs_pri_tol, tinytype 
                     int en_state_soc, int en_input_soc,
                     int en_state_linear, int en_input_linear) {
     if (!settings) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_update_settings: settings is nullptr" << std::endl;
+#endif
         return 1;
     }
     settings->abs_pri_tol = abs_pri_tol;
@@ -346,7 +386,9 @@ int tiny_update_settings(TinySettings* settings, tinytype abs_pri_tol, tinytype 
 
 int tiny_set_default_settings(TinySettings* settings) {
     if (!settings) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_set_default_settings: settings is nullptr" << std::endl;
+#endif
         return 1;
     }
     settings->abs_pri_tol = TINY_DEFAULT_ABS_PRI_TOL;
@@ -374,7 +416,9 @@ int tiny_set_default_settings(TinySettings* settings) {
 
 int tiny_set_x0(TinySolver* solver, tinyVector x0) {
     if (!solver) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_set_x0: solver is nullptr" << std::endl;
+#endif
         return 1;
     }
     if (x0.rows() != solver->work->nx) {
@@ -386,7 +430,9 @@ int tiny_set_x0(TinySolver* solver, tinyVector x0) {
 
 int tiny_set_x_ref(TinySolver* solver, tinyMatrix x_ref) {
     if (!solver) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_set_x_ref: solver is nullptr" << std::endl;
+#endif
         return 1;
     }
     int status = 0;
@@ -398,7 +444,9 @@ int tiny_set_x_ref(TinySolver* solver, tinyMatrix x_ref) {
 
 int tiny_set_u_ref(TinySolver* solver, tinyMatrix u_ref) {
     if (!solver) {
+#ifndef __PX4_NUTTX
         std::cout << "Error in tiny_set_u_ref: solver is nullptr" << std::endl;
+#endif
         return 1;
     }
     int status = 0;
