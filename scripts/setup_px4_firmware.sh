@@ -32,6 +32,20 @@ else
   git -C "${px4_dir}" submodule update --init --recursive --depth 1
 fi
 
+# PX4's NuttX version header reads release tags from the NuttX submodule, which
+# a shallow submodule clone omits. NuttX hardware targets fail without them.
+nuttx_dir="${px4_dir}/platforms/nuttx/NuttX/nuttx"
+if [ -d "${nuttx_dir}/.git" ] || [ -f "${nuttx_dir}/.git" ]; then
+  if ! git -C "${nuttx_dir}" tag --list 'nuttx-*' | grep -q .; then
+    echo "Fetching NuttX release tags for hardware builds."
+    if [ "$(git -C "${nuttx_dir}" rev-parse --is-shallow-repository)" = "true" ]; then
+      git -C "${nuttx_dir}" fetch --unshallow --tags origin
+    else
+      git -C "${nuttx_dir}" fetch --tags origin
+    fi
+  fi
+fi
+
 actual_version="$(git -C "${px4_dir}" describe --tags --always)"
 echo "PX4 checkout reports: ${actual_version}"
 
@@ -65,6 +79,7 @@ echo "  cd '${px4_dir}/Tools/setup'"
 echo "  bash ./ubuntu.sh"
 echo
 echo "That toolchain step uses sudo, installs system packages, and usually requires a reboot."
+echo "On Ubuntu 24.04 see docs/FLASHING.md for the toolchain steps that avoid its pip failure."
 echo
 echo "For the repo-local SITL build path, run:"
 echo "  ./scripts/build_px4_sitl.sh"

@@ -31,6 +31,15 @@ constexpr tinytype kFigureEightTakeoffRate = 0.40;
 constexpr int kFigureEightAltitudeHoldSteps = 10;
 constexpr tinytype kUnbounded = 1.0e6;
 constexpr tinytype kBoundTolerance = 1.0e-5;
+#ifdef TINY_MPC_HARDWARE_HOLD_ONLY
+// Each ADMM iteration costs about 158k instructions on the Pixhawk 6X
+// Cortex-M7, so 50 iterations (~7.9M) can exceed the 18 ms solve deadline.
+// Fifteen bounds the worst case near 2.4M instructions; hold solves normally
+// converge in fewer, and a capped bound-feasible iterate is still accepted.
+constexpr int kMaxAdmmIterations = 15;
+#else
+constexpr int kMaxAdmmIterations = 50;
+#endif
 
 TinySolver* g_solver = nullptr;
 TinySolver* g_figure_solver = nullptr;
@@ -820,7 +829,7 @@ void MPC_Init(void)
         return;
     }
 
-    g_solver->settings->max_iter = 50;
+    g_solver->settings->max_iter = kMaxAdmmIterations;
     g_solver->settings->check_termination = 1;
     tiny_set_x_ref(g_solver, StateTrajectory::Zero());
     tiny_set_u_ref(g_solver, InputTrajectory::Zero());

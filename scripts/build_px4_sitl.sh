@@ -18,8 +18,9 @@ if [ ! -d "${venv_dir}" ]; then
   python3 -m venv "${venv_dir}"
 fi
 
-if ! "${venv_dir}/bin/python" -c "import menuconfig, kconfiglib, em, jinja2, numpy, pymavlink" >/dev/null 2>&1; then
-  "${venv_dir}/bin/python" -m pip install --disable-pip-version-check -r "${px4_dir}/Tools/setup/requirements.txt"
+if ! "${venv_dir}/bin/python" -c "import menuconfig, kconfiglib, em, jinja2, numpy, pymavlink, pkg_resources" >/dev/null 2>&1; then
+  # Python 3.12 venvs omit setuptools, but PX4's UAVCAN generator imports pkg_resources.
+  "${venv_dir}/bin/python" -m pip install --disable-pip-version-check -r "${px4_dir}/Tools/setup/requirements.txt" "setuptools<81"
 fi
 
 # PX4's version header generation expects NuttX release tags to exist.

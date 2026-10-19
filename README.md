@@ -61,6 +61,9 @@ Cross-build the staged Pixhawk 6X image (build only; no upload):
 ./scripts/build_pixhawk6x.sh
 ```
 
+Collaborators flashing a Holybro X500 V2 should follow
+[`docs/FLASHING.md`](docs/FLASHING.md).
+
 The hardware image defaults to a passive solver-monitor mode and blocks the
 moving course modes. See the [6X port and staged validation checklist](docs/pixhawk6x_port.md).
 
@@ -100,6 +103,7 @@ Recorded demonstrations:
 - [Matched TinyMPC versus tuned PX4 experiment](docs/chicane_px4_comparison.md)
 - [Full-state actuator-envelope experiment](docs/full_state_actuator_constraints.md)
 - [Pixhawk 6X build and staged validation](docs/pixhawk6x_port.md)
+- [Flashing and bench-testing handoff](docs/FLASHING.md)
 - [Research direction and remaining validation](docs/research_direction.md)
 - [Contributing](CONTRIBUTING.md)
 

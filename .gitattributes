@@ -3,3 +3,4 @@
 *.pdf binary
 *.patch -whitespace
 quadtest/tinympc/TinyMPC/** -whitespace
+*.px4 binary

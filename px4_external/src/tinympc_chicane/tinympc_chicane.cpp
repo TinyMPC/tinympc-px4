@@ -177,7 +177,8 @@ public:
 		int32_t autostart = -1;
 		const bool autostart_read = read_int_param("SYS_AUTOSTART", autostart);
 #if defined(__PX4_NUTTX)
-		const bool airframe_supported = autostart_read && autostart == 4001;
+		const bool airframe_supported = autostart_read &&
+			(autostart == 4001 || autostart == 4019);
 #else
 		const bool airframe_supported = autostart_read &&
 			(autostart == 4001 || autostart == 4002 ||
