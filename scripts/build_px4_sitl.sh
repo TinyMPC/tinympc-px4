@@ -37,6 +37,7 @@ if [ -f "${simulink_app_cmake}" ] && grep -q 'libtinympcstatic\.a' "${simulink_a
 fi
 
 source "${venv_dir}/bin/activate"
+python "${script_dir}/prepare_px4_metrics.py" "${px4_dir}"
 EXTERNAL_MODULES_LOCATION="${repo_root}/px4_external" \
   make -C "${px4_dir}" "${target}"
 

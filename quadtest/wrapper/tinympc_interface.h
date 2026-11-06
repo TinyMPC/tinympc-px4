@@ -38,6 +38,17 @@ enum TinyMpcDiagnosticIndex {
     TINY_MPC_DIAGNOSTIC_COUNT = 8
 };
 
+struct TinyMpcConfig {
+    int horizon_knots;
+    int iteration_cap;
+    int single_precision;
+    float sample_time_s;
+    float primal_tolerance;
+    float dual_tolerance;
+};
+
+void MPC_GetConfig(int scenario, struct TinyMpcConfig *config);
+
 /* Experimental full-state controller scenarios. These use the supplied
  * 50 Hz hover-linearized model and normalized motor commands. They are kept
  * separate from TinyMpcScenario because the trajectory-setpoint demo must

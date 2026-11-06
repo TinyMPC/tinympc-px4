@@ -62,7 +62,21 @@ Cross-build the staged Pixhawk 6X image (build only; no upload):
 ```
 
 Collaborators flashing a Holybro X500 V2 should follow
-[`docs/FLASHING.md`](docs/FLASHING.md).
+[`docs/FLASHING.md`](docs/FLASHING.md). The packaged image is
+[`firmware/px4_fmu-v6x_multicopter.px4`](firmware/px4_fmu-v6x_multicopter.px4),
+with checksums and build/test details in [`firmware/`](firmware/README.md).
+
+The image records solver and cycle timing, solver outcomes, failures, tracking,
+input freshness, allocation feedback, and CPU/memory diagnostics through
+`tinympc_status`. For disarmed USB recording, use an SD card, set
+`SDLOG_MODE=2` and `SDLOG_BOOT_BAT=0`, save and reboot. Start the module manually
+with `tinympc_chicane start monitor`; check `tinympc_chicane status` and
+`logger status`. See [metric collection and analysis](docs/onboard_metrics.md)
+for field definitions, log download and timing percentiles:
+
+```bash
+python scripts/summarize_tinympc_log.py flight.ulg --output metrics.json
+```
 
 The hardware image defaults to a passive solver-monitor mode and blocks the
 moving course modes. See the [6X port and staged validation checklist](docs/pixhawk6x_port.md).
@@ -85,6 +99,8 @@ Follow the complete setup and flight sequence in
 - Coupled tilt/thrust-cone figure-eight and chicane examples.
 - Deterministic benchmarks with solver residual, iteration, fallback, and
   timing diagnostics.
+- Onboard ULog metrics, failure samples, hardware resource measurements and
+  a log-summary script with timing percentiles and sample-coverage checks.
 - An experimental SITL-only full-state controller that jointly models
   position, attitude, body rate, motor authority, and motor slew.
 - Legacy MATLAB/Simulink integration retained for reproducibility but not
@@ -104,6 +120,7 @@ Recorded demonstrations:
 - [Full-state actuator-envelope experiment](docs/full_state_actuator_constraints.md)
 - [Pixhawk 6X build and staged validation](docs/pixhawk6x_port.md)
 - [Flashing and bench-testing handoff](docs/FLASHING.md)
+- [Onboard metric recording and analysis](docs/onboard_metrics.md)
 - [Research direction and remaining validation](docs/research_direction.md)
 - [Contributing](CONTRIBUTING.md)
 

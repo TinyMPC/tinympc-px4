@@ -1042,6 +1042,27 @@ void MPC_Step_Scenario(const float x[12],
                     stateViolation, inputViolation);
 }
 
+void MPC_GetConfig(int scenario, TinyMpcConfig *config)
+{
+    if (config == nullptr) {
+        return;
+    }
+    config->horizon_knots = kHorizon;
+    TinySolver *selected = g_solver;
+#ifndef TINY_MPC_HARDWARE_HOLD_ONLY
+    if (isCoupledTrajectoryScenario(sanitizeScenario(scenario))) {
+        selected = g_figure_solver;
+    }
+#else
+    (void)scenario;
+#endif
+    config->iteration_cap = selected ? selected->settings->max_iter : kMaxAdmmIterations;
+    config->single_precision = sizeof(tinytype) == sizeof(float);
+    config->sample_time_s = static_cast<float>(kSampleTime);
+    config->primal_tolerance = selected ? static_cast<float>(selected->settings->abs_pri_tol) : NAN;
+    config->dual_tolerance = selected ? static_cast<float>(selected->settings->abs_dua_tol) : NAN;
+}
+
 void MPC_Step_Plan(const float x[12],
                    const float xref[12],
                    float u[4],

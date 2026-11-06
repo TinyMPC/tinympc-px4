@@ -1,0 +1,105 @@
+{
+  "built_at_utc": "2026-11-06T22:04:03.119399+00:00",
+  "target": "px4_fmu-v6x_multicopter",
+  "board_id": 53,
+  "px4_version": "v1.15.3",
+  "repository_commit": "032612bc3f86cd27d5eda3a25b48d506dc914571",
+  "source_id": "da8e8ae676571e5f",
+  "tracked_diff_sha256": "4d3355173635fe1c5b32867f3b50ca21bdf0218b1aa0b1c45d6dd6a970a8951d",
+  "source_files_sha256": {
+    "px4_external/msg/CMakeLists.txt": "112489b4cdb9f73c93c63fc5e1cf35aa39f24ce1ffa6a741c8f176480ef94a20",
+    "px4_external/msg/TinympcStatus.msg": "edf44b81afd49a9b55beaa6adee6bd01b718e3fa05fb3aacd8e37cf078a3e46b",
+    "px4_external/src/CMakeLists.txt": "948a7b4394be241cd1882c861652e2d7f6cec5b97e99909749a8f2cfc6148e02",
+    "px4_external/src/tinympc_chicane/CMakeLists.txt": "5a37d6c89f752b086e23426183ce4ccb4adc63d5b08903327d42b88b2c29ffd0",
+    "px4_external/src/tinympc_chicane/tinympc_build_info.h.in": "a00b8adc890f639a170e8e603db378f2842397d187bf9cbb9c2b777dd53a8e58",
+    "px4_external/src/tinympc_chicane/tinympc_chicane.cpp": "f3d61969a4ef068271566d5888c923c10ff3098744f8eecc4e6224b445381492",
+    "px4_external/src/tinympc_fullstate/CMakeLists.txt": "e45a4b850b674a5eb8deec4f097d2eb457f34daaf0a7a0ffb1d796951b5d1f34",
+    "px4_external/src/tinympc_fullstate/tinympc_fullstate.cpp": "4b7b8d3150c972baf6ffb068975ac3d7a53d8d16228a52f06b80e3d469fb6629",
+    "quadtest/tinympc/TinyMPC/src/tinympc/admm.cpp": "d839a869ef9a99298484a93f44f99a63e81d72da2224bc8bc63da28dabc9df48",
+    "quadtest/tinympc/TinyMPC/src/tinympc/admm.hpp": "1d202ee47b40dbd6c816de632a33863481f49e04d0a07d083e08b7a91d42f7fe",
+    "quadtest/tinympc/TinyMPC/src/tinympc/codegen.cpp": "ee300a6912a85c062b1ec1784d62a0c541079e6d8529b2848acd478199dcfc99",
+    "quadtest/tinympc/TinyMPC/src/tinympc/codegen.hpp": "9081d598735576c29467fd606d1d85299ed2bd5dd8e8716f227cc7ae923250a0",
+    "quadtest/tinympc/TinyMPC/src/tinympc/error.hpp": "62c60a1baa5b5fb9662e6f373594204cd53c7ede9e7581e24ad44c3352c4fb8d",
+    "quadtest/tinympc/TinyMPC/src/tinympc/rho_benchmark.cpp": "3e7829217ce52fde0701d549c089416438bc9e4ece3f4fe84207e2addbcef49d",
+    "quadtest/tinympc/TinyMPC/src/tinympc/rho_benchmark.hpp": "d2e62fcfb242d78e09f18cbcba64bde9155e69b10937e2b93e05c7f6cd0c19f0",
+    "quadtest/tinympc/TinyMPC/src/tinympc/tiny_api.cpp": "795287ed6534b90f11209065499318f8a0a6c0fa7c5108ee282357299b8b27f2",
+    "quadtest/tinympc/TinyMPC/src/tinympc/tiny_api.hpp": "4d1183d87d232acd52b0748ac29de3e33a0e85d752b2ce92396761f5ea11e166",
+    "quadtest/tinympc/TinyMPC/src/tinympc/tiny_api_constants.hpp": "757db06631a272fdd3290186566eb8558de4af0f6cb0216c21c23a4f71e72e4e",
+    "quadtest/tinympc/TinyMPC/src/tinympc/types.hpp": "216a3352a1c228e6dcd8b2ce33305c43f56dd598dc57b134e088a4c2f746cb01",
+    "quadtest/wrapper/tinympc_chicane_course.hpp": "3d3e22a0e1317e67be4fbe6d7fb5b8c48c255b5af8ccbdea0e4c225330839036",
+    "quadtest/wrapper/tinympc_full_state_model.hpp": "9448ff31ea8f7246e04315b89c9cb05841c2b62b6a9412075623f7f71b25bed7",
+    "quadtest/wrapper/tinympc_interface.cpp": "0eb5cc2583af5bb7bd16e6061ee2754906d5eb9a02b3b76bfafac6bda6e639ba",
+    "quadtest/wrapper/tinympc_interface.h": "c974ab0cb22643b7d6cc5b737855cf81973af8ae936c55523807b7ffcb80c720"
+  },
+  "compiler_version": "arm-none-eabi-g++ (GNU Arm Embedded Toolchain 9-2020-q2-update) 9.3.1 20200408 (release)",
+  "module_compile_definitions": [
+    "EIGEN_DONT_VECTORIZE",
+    "EIGEN_NO_IO",
+    "TINY_DISABLE_ADAPTIVE_RHO",
+    "TINY_MPC_HARDWARE_HOLD_ONLY",
+    "TINY_MPC_SINGLE_PRECISION",
+    "TINY_MPC_USE_STATIC_CACHE"
+  ],
+  "software_validation": {
+    "source_id": "da8e8ae676571e5f",
+    "environment": "PX4 SIH, disarmed; host pauses deliberately injected for deadline testing",
+    "hardware_tested": false,
+    "ulog_dropouts": 0,
+    "passive_monitor_no_offboard_publication": true,
+    "runs": [
+      {
+        "solve_samples": 103,
+        "capture_fraction": 1.0,
+        "missing_cycle_samples": 0,
+        "failures": [
+          {
+            "timestamp_us": 36864000,
+            "reason": 6,
+            "reason_name": "deadline",
+            "solve_called": true,
+            "policy": 2,
+            "solve_time_us": 41118
+          }
+        ]
+      },
+      {
+        "solve_samples": 0,
+        "capture_fraction": null,
+        "missing_cycle_samples": 0,
+        "failures": [
+          {
+            "timestamp_us": 36996000,
+            "reason": 1,
+            "reason_name": "configuration",
+            "solve_called": false,
+            "policy": -2,
+            "solve_time_us": null
+          }
+        ]
+      },
+      {
+        "solve_samples": 101,
+        "capture_fraction": 1.0,
+        "missing_cycle_samples": 0,
+        "failures": []
+      }
+    ]
+  },
+  "metrics_schema": 1,
+  "firmware_sha256": "049ed7e7566d9d7deb65d311500484d8a8fd6d14938c5740e50a8439030762d2",
+  "elf_sha256": "9f21cf96a6abe3075c6f82abbc3a55c00ce00e047fdab28bf2b0ba283c95ac54",
+  "image_size_bytes": 1898180,
+  "previous_packaged_image_size_bytes": 1894628,
+  "image_size_delta_bytes": 3552,
+  "elf_text_bytes": 1893000,
+  "elf_data_bytes": 5180,
+  "elf_bss_bytes": 97440,
+  "elf_static_ram_bytes": 102620,
+  "logger_registration_sha256": "44ec8aa1b2f02ff1b17ebf4db3c9d5ed55dd61bb97210463b757014bce12e923",
+  "diagnostic_schema_sha256": "edf44b81afd49a9b55beaa6adee6bd01b718e3fa05fb3aacd8e37cf078a3e46b",
+  "hardware_validation": "not run on a physical Pixhawk",
+  "hardware_modes": [
+    "monitor",
+    "hold"
+  ]
+}

@@ -90,9 +90,10 @@ ground-effect assumptions are documented.
 
 ## Evidence needed for an onboard result
 
-For each solver call, log:
+Record per-cycle diagnostics and produce run summaries covering:
 
-- p50/p95/p99/worst execution time and 20 ms deadline misses;
+- p50/p95/p99/worst execution time, 18 ms solve deadline misses, and 20 ms
+  controller-work overruns;
 - iteration count, primal/dual residuals, converged/best-effort/fallback state;
 - flight-controller CPU load, stack/high-water mark, static RAM, heap use, and
   firmware flash delta;
@@ -105,7 +106,9 @@ guidance, and TinyMPC direct. Report failure cases, not only successful runs.
 
 ## Immediate engineering work
 
-1. Publish the eight-value solver diagnostic vector to a logged uORB topic.
+1. Collect hardware logs using the implemented `tinympc_status` topic and
+   [summary script](onboard_metrics.md). The recorder and software checks are
+   complete; board recording and runtime evidence remain to be collected.
 2. Measure the generated solver on a Pixhawk-class target; desktop timing is
    only a build/regression signal.
 3. Replace runtime TinyMPC setup/allocation with generated static solver data
@@ -114,7 +117,8 @@ guidance, and TinyMPC direct. Report failure cases, not only successful runs.
    actual airframe.
 5. Add estimator-reset handling and an explicit arming/engagement reset.
 6. Add model-error backoff to the coupled tilt/thrust constraint.
-7. Automate SIH/Gazebo matched-baseline runs and ULog metric extraction.
+7. Automate SIH/Gazebo matched-baseline runs using the existing ULog metric
+   extraction tools and the new onboard diagnostic summaries.
 8. Validate the supplied full-state/motor model, then connect its output at a
    PX4 control-allocation boundary rather than bypassing arming and failsafes.
 

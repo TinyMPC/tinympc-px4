@@ -21,6 +21,9 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/debug_array.h>
+#include <uORB/topics/cpuload.h>
+#include <uORB/topics/control_allocator_status.h>
+#include <uORB/topics/tinympc_status.h>
 #include <uORB/topics/offboard_control_mode.h>
 #include <uORB/topics/trajectory_setpoint.h>
 #include <uORB/topics/vehicle_attitude.h>
@@ -30,12 +33,20 @@
 
 #include "tinympc_chicane_course.hpp"
 #include "tinympc_interface.h"
+#include "tinympc_build_info.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <time.h>
+
+#if defined(__PX4_NUTTX)
+#include <malloc.h>
+#include <nuttx/arch.h>
+#include <nuttx/sched.h>
+#endif
 
 namespace
 {
@@ -101,7 +112,24 @@ SharedStatus g_status{};
 
 uint64_t monotonic_wall_time_us()
 {
+#if defined(__PX4_NUTTX)
 	return hrt_absolute_time();
+#else
+	// SITL's hrt clock can stop while the solver runs. Measure actual host work.
+	struct timespec now {};
+	return clock_gettime(CLOCK_MONOTONIC, &now) == 0 ?
+		static_cast<uint64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000 : 0;
+#endif
+}
+
+uint32_t bounded_us(uint64_t value)
+{
+	return static_cast<uint32_t>(std::min(value, static_cast<uint64_t>(UINT32_MAX)));
+}
+
+uint32_t sample_age(uint64_t now, uint64_t timestamp)
+{
+	return timestamp == 0 ? UINT32_MAX : bounded_us(now > timestamp ? now - timestamp : 0);
 }
 
 bool finite(float value)
@@ -161,7 +189,21 @@ const char *failure_name(int reason)
 class ChicaneController
 {
 public:
-	explicit ChicaneController(int mode) : _mode(mode) {}
+	explicit ChicaneController(int mode) : _mode(mode)
+	{
+		_metrics.run_id = hrt_absolute_time();
+		_metrics.schema_version = tinympc_status_s::SCHEMA_VERSION;
+		std::strncpy(_metrics.source_id, TINYMPC_SOURCE_ID, sizeof(_metrics.source_id) - 1);
+		std::strncpy(_metrics.source_commit, TINYMPC_SOURCE_COMMIT, sizeof(_metrics.source_commit) - 1);
+		_metrics.system_cpu_load = NAN;
+		_metrics.system_ram_usage = NAN;
+		_metrics.heap_free_bytes = UINT32_MAX;
+		_metrics.heap_min_free_bytes = UINT32_MAX;
+		_metrics.stack_free_bytes = UINT32_MAX;
+		_metrics.stack_size_bytes = UINT32_MAX;
+		_metrics.init_heap_delta_bytes = INT32_MIN;
+		reset_sample();
+	}
 
 	bool init()
 	{
@@ -210,8 +252,25 @@ public:
 			return false;
 		}
 
+		const uint64_t init_start = monotonic_wall_time_us();
+#if defined(__PX4_NUTTX)
+		const int32_t heap_before = mallinfo().uordblks;
+#endif
 		MPC_Init();
 		MPC_Reset();
+		_metrics.init_time_us = bounded_us(monotonic_wall_time_us() - init_start);
+#if defined(__PX4_NUTTX)
+		_metrics.init_heap_delta_bytes = static_cast<int32_t>(mallinfo().uordblks) - heap_before;
+#endif
+		TinyMpcConfig config{};
+		MPC_GetConfig(_mode == ModeMpc ? TINY_MPC_SCENARIO_CHICANE_SOC : TINY_MPC_SCENARIO_POSITION_HOLD, &config);
+		_metrics.config[0] = config.horizon_knots;
+		_metrics.config[1] = config.iteration_cap;
+		_metrics.config[2] = config.single_precision;
+		_metrics.config[3] = config.sample_time_s;
+		_metrics.config[4] = config.primal_tolerance;
+		_metrics.config[5] = config.dual_tolerance;
+		sample_resources();
 		g_status.ready = true;
 		if (_mode == ModeMonitor) {
 			PX4_INFO("ready: monitor only; no heartbeat or setpoint publication");
@@ -232,14 +291,27 @@ public:
 				px4_usleep(next_run - now);
 			}
 
+			const uint64_t scheduled = next_run;
 			next_run += kUpdatePeriodUs;
 			const uint64_t actual_now = hrt_absolute_time();
+			reset_sample();
+			_metrics.start_lateness_us = bounded_us(actual_now > scheduled ? actual_now - scheduled : 0);
+			_metrics.cycle_interval_us = _last_cycle_start ? bounded_us(actual_now - _last_cycle_start) : 0;
+			_last_cycle_start = actual_now;
 
 			if (actual_now > next_run + kUpdatePeriodUs) {
+				_metrics.skipped_releases += bounded_us((actual_now - next_run) / kUpdatePeriodUs + 1);
 				next_run = actual_now + kUpdatePeriodUs;
 			}
 
+			const uint64_t cycle_start = monotonic_wall_time_us();
 			step();
+			sample_resources();
+			_metrics.cycle_time_us = bounded_us(monotonic_wall_time_us() - cycle_start);
+			_metrics.cycle_max_us = std::max(_metrics.cycle_max_us, _metrics.cycle_time_us);
+			_metrics.loop_overruns += _metrics.cycle_time_us > kUpdatePeriodUs ? 1 : 0;
+			++_metrics.sequence;
+			publish_status();
 		}
 
 		vehicle_status_s status{};
@@ -250,7 +322,100 @@ public:
 		}
 	}
 
+	void publish_status()
+	{
+		if (!g_status.running) {
+			reset_sample();
+			_metrics.cycle_time_us = 0;
+			++_metrics.sequence;
+		}
+		_metrics.timestamp = hrt_absolute_time();
+		_metrics.mode = _mode;
+		_metrics.running = g_status.running;
+		_metrics.ready = g_status.ready;
+		_metrics.engaged = g_status.engaged;
+		_metrics.failed = g_status.failed;
+		_metrics.failure_reason = g_status.failure_reason;
+		_metrics.course_time = g_status.course_time;
+		_metrics.corridor_violation = g_status.corridor_violation;
+		_status_pub.publish(_metrics);
+	}
+
 private:
+	void reset_sample()
+	{
+		_metrics.solve_called = false;
+		_metrics.command_accepted = false;
+		_metrics.tracking_valid = false;
+		_metrics.solve_time_us = 0;
+		_metrics.iterations = 0;
+		_metrics.policy = TINY_MPC_SOLVE_INVALID;
+		_metrics.primal_residual = NAN;
+		_metrics.dual_residual = NAN;
+		_metrics.planned_state_violation = NAN;
+		_metrics.planned_input_violation = NAN;
+		_metrics.position_error_norm = NAN;
+		_metrics.hold_position_margin = NAN;
+		_metrics.hold_velocity_margin = NAN;
+		for (int i = 0; i < 3; ++i) {
+			_metrics.position_error[i] = NAN;
+			_metrics.velocity_error[i] = NAN;
+		}
+		for (float &command : _metrics.command) {
+			command = NAN;
+		}
+	}
+
+	void sample_resources()
+	{
+		cpuload_s load{};
+		if (_cpuload_sub.update(&load)) {
+			_metrics.system_cpu_load = load.load;
+			_metrics.system_ram_usage = load.ram_usage;
+			_metrics.cpuload_timestamp = load.timestamp;
+		}
+		const uint64_t now = hrt_absolute_time();
+		if (_metrics.resource_timestamp && now - _metrics.resource_timestamp < 1000000) {
+			return;
+		}
+#if defined(__PX4_NUTTX)
+		const struct mallinfo mem = mallinfo();
+		_metrics.heap_free_bytes = mem.fordblks;
+		_metrics.heap_min_free_bytes = std::min(_metrics.heap_min_free_bytes, _metrics.heap_free_bytes);
+#if defined(CONFIG_STACK_COLORATION)
+		_metrics.stack_free_bytes = up_check_tcbstack_remain(nxsched_self());
+		_metrics.stack_size_bytes = nxsched_self()->adj_stack_size;
+#endif
+		_metrics.resource_timestamp = now;
+#else
+		(void)now;
+#endif
+	}
+
+	void record_tracking(const vehicle_local_position_s &local)
+	{
+		const bool course = _mode == ModeMpc || _mode == ModePid || _mode == ModePidTuned;
+		const auto reference = course ? tinympc_chicane::sample(static_cast<double>(_course_time)) :
+			tinympc_chicane::Sample{};
+		const float relative[3] = {local.x - _origin_x, local.y - _origin_y, local.z - _origin_z};
+		_metrics.tracking_valid = _metrics.state_valid;
+		_metrics.position_error[0] = relative[0] - static_cast<float>(reference.x);
+		_metrics.position_error[1] = relative[1] - static_cast<float>(reference.y);
+		_metrics.position_error[2] = relative[2];
+		_metrics.velocity_error[0] = local.vx - static_cast<float>(reference.vx);
+		_metrics.velocity_error[1] = local.vy - static_cast<float>(reference.vy);
+		_metrics.velocity_error[2] = local.vz;
+		_metrics.position_error_norm = std::sqrt(
+			_metrics.position_error[0] * _metrics.position_error[0] +
+			_metrics.position_error[1] * _metrics.position_error[1] + relative[2] * relative[2]);
+		if (!course) {
+			_metrics.hold_position_margin = std::min(0.5f - std::fabs(relative[0]),
+				std::min(0.5f - std::fabs(relative[1]), 0.4f - std::fabs(relative[2])));
+			_metrics.hold_velocity_margin = std::min(1.f - std::fabs(local.vx),
+				std::min(1.f - std::fabs(local.vy), 0.75f - std::fabs(local.vz)));
+		}
+	}
+
 	static bool timestamp_is_fresh(uint64_t now, uint64_t timestamp, uint64_t maximum_age)
 	{
 		return timestamp > 0 &&
@@ -317,6 +482,7 @@ private:
 		_engaged = true;
 		_failover_command_sent = false;
 		MPC_Reset();
+		++_metrics.session;
 		g_status.engaged = true;
 		g_status.course_time = 0.f;
 		g_status.corridor_violation = 0.f;
@@ -384,9 +550,27 @@ private:
 		g_status.iterations = static_cast<int>(diagnostics[TINY_MPC_DIAG_ITERATIONS]);
 		g_status.primal_residual = diagnostics[TINY_MPC_DIAG_PRIMAL_RESIDUAL];
 		g_status.dual_residual = diagnostics[TINY_MPC_DIAG_DUAL_RESIDUAL];
+		_metrics.solve_called = true;
+		_metrics.solve_time_us = bounded_us(elapsed);
+		_metrics.solve_max_us = std::max(_metrics.solve_max_us, _metrics.solve_time_us);
+		++_metrics.solve_count;
+		_metrics.policy = g_status.solve_policy;
+		_metrics.iterations = g_status.iterations;
+		_metrics.max_iterations = std::max(_metrics.max_iterations, _metrics.iterations);
+		_metrics.primal_residual = g_status.primal_residual;
+		_metrics.dual_residual = g_status.dual_residual;
+		_metrics.planned_state_violation = diagnostics[TINY_MPC_DIAG_STATE_VIOLATION];
+		_metrics.planned_input_violation = diagnostics[TINY_MPC_DIAG_INPUT_VIOLATION];
+		std::memcpy(_metrics.command, control, sizeof(control));
+		_metrics.converged_count += _metrics.policy == TINY_MPC_SOLVE_CONVERGED ? 1 : 0;
+		_metrics.best_effort_count += _metrics.policy == TINY_MPC_SOLVE_BEST_EFFORT ? 1 : 0;
+		_metrics.fallback_count += _metrics.policy == TINY_MPC_SOLVE_FALLBACK ? 1 : 0;
+		_metrics.iteration_limit_count += _metrics.iterations >= _metrics.config[1] ? 1 : 0;
 
 		if (elapsed > kSolveDeadlineUs) {
 			++g_status.deadline_miss_count;
+			++_metrics.solve_deadline_misses;
+			++_metrics.rejected_count;
 			g_status.failure_reason = FailureDeadline;
 			return false;
 		}
@@ -407,8 +591,10 @@ private:
 				(double)diagnostics[TINY_MPC_DIAG_STATE_VIOLATION],
 				(double)diagnostics[TINY_MPC_DIAG_INPUT_VIOLATION]);
 			g_status.failure_reason = FailureSolver;
+			++_metrics.rejected_count;
 			return false;
 		}
+		_metrics.command_accepted = true;
 
 		if (publish_setpoint) {
 			trajectory_setpoint_s setpoint{};
@@ -504,6 +690,26 @@ private:
 		_attitude_sub.copy(&attitude);
 		_vehicle_status_sub.copy(&status);
 		const uint64_t now = hrt_absolute_time();
+		_metrics.input_age_us[0] = sample_age(now, local.timestamp);
+		_metrics.input_age_us[1] = sample_age(now, attitude.timestamp);
+		_metrics.input_age_us[2] = sample_age(now, status.timestamp);
+		_metrics.state_valid = state_is_fresh(now, local, attitude, status);
+		_metrics.position[0] = local.x;
+		_metrics.position[1] = local.y;
+		_metrics.position[2] = local.z;
+		_metrics.velocity[0] = local.vx;
+		_metrics.velocity[1] = local.vy;
+		_metrics.velocity[2] = local.vz;
+		control_allocator_status_s allocator{};
+		_allocator_sub.copy(&allocator);
+		_metrics.allocator_valid = timestamp_is_fresh(now, allocator.timestamp, kStateFreshnessUs);
+		_metrics.actuator_saturated = false;
+		for (const auto saturation : allocator.actuator_saturation) {
+			_metrics.actuator_saturated |= saturation != control_allocator_status_s::ACTUATOR_SATURATION_OK;
+		}
+		_metrics.thrust_setpoint_achieved = allocator.thrust_setpoint_achieved;
+		_metrics.torque_setpoint_achieved = allocator.torque_setpoint_achieved;
+		_metrics.stale_cycles += !_metrics.state_valid ? 1 : 0;
 
 		if (g_status.failed) {
 			return;
@@ -525,8 +731,10 @@ private:
 				_origin_z = local.z;
 				_origin_yaw = yaw_from_attitude(attitude);
 				MPC_Reset();
+				++_metrics.session;
 				_monitor_initialized = true;
 			}
+			record_tracking(local);
 
 			float diagnostics[TINY_MPC_DIAGNOSTIC_COUNT]{};
 			if (!run_mpc(now, local, attitude,
@@ -554,8 +762,10 @@ private:
 		if (!_engaged) {
 			engage(local, attitude);
 		}
+		record_tracking(local);
 
 		if (estimator_was_reset(local, attitude)) {
+			++_metrics.estimator_reset_events;
 			request_loiter(FailureEstimatorReset);
 			return;
 		}
@@ -600,6 +810,8 @@ private:
 	}
 
 	int _mode;
+	tinympc_status_s _metrics{};
+	uint64_t _last_cycle_start{0};
 	bool _engaged{false};
 	bool _monitor_initialized{false};
 	bool _failover_command_sent{false};
@@ -618,10 +830,13 @@ private:
 	uORB::Subscription _local_position_sub{ORB_ID(vehicle_local_position)};
 	uORB::Subscription _attitude_sub{ORB_ID(vehicle_attitude)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::Subscription _cpuload_sub{ORB_ID(cpuload)};
+	uORB::Subscription _allocator_sub{ORB_ID(control_allocator_status)};
 	uORB::Publication<offboard_control_mode_s> _offboard_mode_pub{ORB_ID(offboard_control_mode)};
 	uORB::Publication<trajectory_setpoint_s> _trajectory_setpoint_pub{ORB_ID(trajectory_setpoint)};
 	uORB::Publication<vehicle_command_s> _vehicle_command_pub{ORB_ID(vehicle_command)};
 	uORB::Publication<debug_array_s> _debug_pub{ORB_ID(debug_array)};
+	uORB::Publication<tinympc_status_s> _status_pub{ORB_ID(tinympc_status)};
 };
 
 int controller_thread_main(int argc, char *argv[])
@@ -640,6 +855,7 @@ int controller_thread_main(int argc, char *argv[])
 	g_status.running = false;
 	g_status.ready = false;
 	g_status.engaged = false;
+	controller.publish_status();
 	g_task_id = -1;
 	return PX4_OK;
 }
@@ -715,6 +931,8 @@ extern "C" __EXPORT int tinympc_chicane_main(int argc, char *argv[])
 	}
 
 	if (std::strcmp(argv[1], "status") == 0) {
+		PX4_INFO("metrics_schema=%u source=%s commit=%s", tinympc_status_s::SCHEMA_VERSION,
+			 TINYMPC_SOURCE_ID, TINYMPC_SOURCE_COMMIT);
 		PX4_INFO("%s ready=%d engaged=%d failed=%d mode=%s reason=%s",
 			 g_status.running ? "running" : "stopped",
 			 g_status.ready, g_status.engaged, g_status.failed,
@@ -728,6 +946,26 @@ extern "C" __EXPORT int tinympc_chicane_main(int argc, char *argv[])
 			 g_status.solve_policy, g_status.iterations,
 			 (double)g_status.primal_residual, (double)g_status.dual_residual,
 			 static_cast<unsigned long long>(g_status.deadline_miss_count));
+		uORB::Subscription metrics_sub{ORB_ID(tinympc_status)};
+		tinympc_status_s metrics{};
+		if (metrics_sub.copy(&metrics)) {
+			PX4_INFO("cycle_us=%lu max=%lu late_us=%lu overruns=%lu skipped=%lu stale=%lu",
+				 (unsigned long)metrics.cycle_time_us, (unsigned long)metrics.cycle_max_us,
+				 (unsigned long)metrics.start_lateness_us, (unsigned long)metrics.loop_overruns,
+				 (unsigned long)metrics.skipped_releases, (unsigned long)metrics.stale_cycles);
+			PX4_INFO("converged=%lu best_effort=%lu fallback=%lu rejected=%lu cap_hits=%lu",
+				 (unsigned long)metrics.converged_count, (unsigned long)metrics.best_effort_count,
+				 (unsigned long)metrics.fallback_count, (unsigned long)metrics.rejected_count,
+				 (unsigned long)metrics.iteration_limit_count);
+			PX4_INFO("cpu=%.1f%% ram=%.1f%% heap_free=%lu min=%lu stack_free=%lu/%lu",
+				 (double)(100.f * metrics.system_cpu_load), (double)(100.f * metrics.system_ram_usage),
+				 (unsigned long)metrics.heap_free_bytes, (unsigned long)metrics.heap_min_free_bytes,
+				 (unsigned long)metrics.stack_free_bytes, (unsigned long)metrics.stack_size_bytes);
+			PX4_INFO("horizon=%u cap=%u fp32=%d init_us=%lu heap_delta=%ld pos_err=%.3f margin=%.3f",
+				 (unsigned)metrics.config[0], (unsigned)metrics.config[1], (int)metrics.config[2],
+				 (unsigned long)metrics.init_time_us, (long)metrics.init_heap_delta_bytes,
+				 (double)metrics.position_error_norm, (double)metrics.hold_position_margin);
+		}
 		return PX4_OK;
 	}
 

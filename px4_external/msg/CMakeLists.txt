@@ -1,0 +1,1 @@
+set(config_msg_list_external TinympcStatus.msg PARENT_SCOPE)

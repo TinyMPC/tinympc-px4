@@ -1,5 +1,30 @@
 get_filename_component(TINYMPC_PX4_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 set(TINYMPC_CORE "${TINYMPC_PX4_ROOT}/quadtest/tinympc/TinyMPC")
+# Embed a content identifier as well as the base commit, so uncommitted builds
+# can be matched to the packaged manifest and the recorded ULog.
+file(GLOB_RECURSE TINYMPC_ID_FILES CONFIGURE_DEPENDS
+	"${TINYMPC_PX4_ROOT}/px4_external/*.cpp"
+	"${TINYMPC_PX4_ROOT}/px4_external/*.msg"
+	"${TINYMPC_PX4_ROOT}/px4_external/*.h.in"
+	"${TINYMPC_PX4_ROOT}/px4_external/*CMakeLists.txt"
+	"${TINYMPC_PX4_ROOT}/quadtest/wrapper/*.h"
+	"${TINYMPC_PX4_ROOT}/quadtest/wrapper/*.hpp"
+	"${TINYMPC_PX4_ROOT}/quadtest/wrapper/tinympc_interface.cpp"
+	"${TINYMPC_CORE}/src/tinympc/*.cpp"
+	"${TINYMPC_CORE}/src/tinympc/*.hpp"
+)
+set(TINYMPC_ID_INPUT "")
+foreach(TINYMPC_ID_FILE IN LISTS TINYMPC_ID_FILES)
+	set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TINYMPC_ID_FILE}")
+	file(SHA256 "${TINYMPC_ID_FILE}" TINYMPC_FILE_HASH)
+	file(RELATIVE_PATH TINYMPC_ID_PATH "${TINYMPC_PX4_ROOT}" "${TINYMPC_ID_FILE}")
+	string(APPEND TINYMPC_ID_INPUT "${TINYMPC_ID_PATH}:${TINYMPC_FILE_HASH}\n")
+endforeach()
+string(SHA256 TINYMPC_SOURCE_HASH "${TINYMPC_ID_INPUT}")
+string(SUBSTRING "${TINYMPC_SOURCE_HASH}" 0 16 TINYMPC_SOURCE_ID)
+execute_process(COMMAND git -C "${TINYMPC_PX4_ROOT}" rev-parse --short=12 HEAD
+	OUTPUT_VARIABLE TINYMPC_SOURCE_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE)
+configure_file(tinympc_build_info.h.in tinympc_build_info.h @ONLY)
 set(TINYMPC_CHICANE_SOURCES
 	tinympc_chicane.cpp
 	${TINYMPC_PX4_ROOT}/quadtest/wrapper/tinympc_interface.cpp
@@ -21,6 +46,7 @@ px4_add_module(
 	SRCS
 		${TINYMPC_CHICANE_SOURCES}
 	INCLUDES
+		${CMAKE_CURRENT_BINARY_DIR}
 		${TINYMPC_PX4_ROOT}/quadtest/wrapper
 		${TINYMPC_CORE}/src
 		${TINYMPC_CORE}/src/tinympc

@@ -16,12 +16,15 @@ Flash `firmware/px4_fmu-v6x_multicopter.px4` (PX4 board ID 53, Pixhawk 6X).
 See [`firmware/`](../firmware/README.md). Verify it before flashing:
 
 ```bash
-sha256sum -c SHA256SUMS
+(cd firmware && sha256sum -c SHA256SUMS)
 ```
 
 The image is PX4 v1.15.3 with the fixed-wing, VTOL, and airspeed modules
 removed (an X500 uses none of them) plus the `tinympc_chicane` module. It
-uses 96.4% of flash. QGroundControl checks the board ID and refuses to load
+includes the named `tinympc_status` metrics topic and default logger registration.
+Its exact image size, static RAM, content identifier and hash are recorded in
+[`firmware/build_manifest.json`](../firmware/build_manifest.json).
+QGroundControl checks the board ID and refuses to load
 it onto any board other than a Pixhawk 6X.
 
 ## 2. Flash
@@ -41,11 +44,18 @@ it onto any board other than a Pixhawk 6X.
 | --- | --- | --- |
 | `SYS_AUTOSTART` | `4019` (Holybro X500 V2) | Module refuses any other airframe except `4001` |
 | `MPC_TILTMAX_AIR` | `15` | Module refuses to start otherwise |
+| `SDLOG_MODE` | `2` | Record disarmed monitor runs from boot until shutdown; reboot required |
+| `SDLOG_BOOT_BAT` | `0` | Permit logs when powered only through USB |
 
 Select the airframe in **Vehicle Setup → Airframe → Quadrotor x → Holybro
 X500 V2** rather than typing `SYS_AUTOSTART`, so PX4 applies the X500 rate
 gains and motor mapping. Keep a radio-controlled mode switch configured so
 the pilot can leave Offboard at any time.
+
+Insert a working SD card, save the logging parameters and reboot before the
+bench run. Follow [metric collection and analysis](onboard_metrics.md) to check
+the active log and return the complete `.ulg`; flashing alone does not replace
+saved logging parameters.
 
 ## 4. Bench stages
 
@@ -65,16 +75,19 @@ starting, because monitor latches its hold origin at the first valid sample.
 ```text
 tinympc_chicane start monitor
 tinympc_chicane status
+logger status
+listener tinympc_status 1
 top
 free
 ```
 
-Healthy output after a few minutes looks like this (SITL example; solve
-times there read 0 because simulated time does not advance during a solve):
+The original status fields remain available, with additional schema/source,
+cycle timing, outcome, resource and configuration lines. Representative output
+has this form (values below are illustrative, not hardware measurements):
 
 ```text
 running ready=1 engaged=0 failed=0 mode=tinympc_monitor reason=none
-time=0.00 violation=0.000 max=0.000 solves=1485 solve_us=0 max_us=0
+time=0.00 violation=0.000 max=0.000 solves=1485 solve_us=<latest_us> max_us=<worst_us>
 policy=1 iter=6 residual=[0 0.000715] deadline_misses=0
 ```
 
@@ -89,6 +102,9 @@ Record and report:
 | `policy` | `1` (converged) most of the time; occasional `2` (best effort, hit the 15-iteration cap) is acceptable |
 | `free` | Report the free-heap figure |
 | `top` | Report `tinympc_chicane` CPU load and stack headroom |
+| `metrics_schema`, `source` | Schema `1`; content identifier matches `firmware/build_manifest.json` |
+| `overruns`, `skipped`, `rejected` | Report these along with scheduling lateness and any nonzero failures |
+| `logger status` | Active full file log; report dropouts and return the `.ulg` |
 
 A sustained `policy=2` with a large first residual on a stationary board
 means the position estimate has drifted more than 0.5 m horizontally or
@@ -96,7 +112,10 @@ means the position estimate has drifted more than 0.5 m horizontally or
 then start monitor again. Any `failed=1`, a `reject policy=` error, or a
 deadline miss is a stop condition; send the log.
 
-Stop with `tinympc_chicane stop`. Repeat across several reboots.
+Stop with `tinympc_chicane stop`, then `logger stop` to finish the log before
+power removal. Repeat across several reboots. Run
+`python scripts/summarize_tinympc_log.py flight.ulg --output metrics.json` on
+the downloaded log for timing percentiles and the full summary.
 
 ### Stage 2: hold, props off and restrained
 
@@ -138,7 +157,17 @@ is the intended safe outcome, not a crash. In SITL the hold wandered by about
 simulator, so the 0.75 m envelope leaves limited margin with a noisy
 position estimate. Report how often it trips.
 
-## Software checks already passed
+## Software verification
+
+The metrics update is checked with the 6X and SITL builds, native solver
+benchmarks, Eigen allocation checks, metric-accounting regression tests, and
+an actual disarmed SIH ULog containing normal solves, an induced deadline
+failure, a refused initialization and a restart. The log summary checks solver
+sample coverage and dropouts. See [onboard metrics](onboard_metrics.md).
+
+The following controller checks were recorded before the metrics update;
+the new image has not repeated the earlier flight scenarios in SITL or the
+fresh-clone campaign:
 
 | Check | Result |
 | --- | --- |
@@ -154,7 +183,7 @@ position estimate. Report how often it trips.
 | SITL: envelope departure fails closed to Loiter | Pass |
 | Cortex-M7 emulation of the 6X solver code: worst case 2.41M instructions (about 5–10 ms), 5.2 KB stack, 32 KB heap | Pass |
 | Fresh clone of this branch: setup, all builds, and all checks above | Pass |
-| Fresh 6X build matches the committed image (identical symbol sizes) | Pass |
+| Earlier fresh 6X build matched the then-committed image (identical symbol sizes) | Pass |
 
 SITL ran PX4's built-in SIH quadrotor, not an X500 model, and cannot measure
 Pixhawk solve time, heap, or stack. The emulation estimate is in
@@ -175,6 +204,7 @@ mkdir -p ~/opt
 wget -O /tmp/gcc-arm.tar.bz2 https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/9-2020q2/gcc-arm-none-eabi-9-2020-q2-update-x86_64-linux.tar.bz2
 tar -jxf /tmp/gcc-arm.tar.bz2 -C ~/opt/
 ./scripts/build_pixhawk6x.sh
+python3 scripts/package_pixhawk6x.py --size-tool "$HOME/opt/gcc-arm-none-eabi-9-2020-q2-update/bin/arm-none-eabi-size"
 ```
 
 PX4's own `Tools/setup/ubuntu.sh` fails on Ubuntu 24.04 (system-wide `pip`

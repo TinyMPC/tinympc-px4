@@ -148,9 +148,12 @@ satisfies the dynamics equality to arbitrary precision.
 | 7 | cumulative solve count |
 
 The native benchmark prints these metrics plus optimized desktop p50/p95/p99
-and worst solve time. The current Simulink app computes the diagnostic vector
-but does not yet publish it to uORB. Publishing it to a logged PX4 diagnostic
-topic is a required hardware-validation task.
+and worst solve time. The native `tinympc_chicane` module now records solver
+diagnostics and additional timing, failure, tracking and resource measurements
+in the logged `tinympc_status` uORB topic. See
+[onboard metric collection and analysis](onboard_metrics.md).
+The legacy Simulink app still computes its diagnostic vector without publishing
+it to uORB.
 
 The supplied-matrix, motor-level experiment uses a separate API and solver so
 it cannot be selected accidentally by the trajectory-setpoint flight demo.

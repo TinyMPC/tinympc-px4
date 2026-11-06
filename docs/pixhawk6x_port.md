@@ -26,14 +26,17 @@ that checkout. The script only builds the file; it never uploads it. Ubuntu
 
 The image uses PX4's multicopter-only 6X configuration, which drops the
 fixed-wing, VTOL, and airspeed modules. The full `px4_fmu-v6x_default`
-image no longer fits: with the PX4 v1.15 ARM GCC 9 toolchain it overflows
-flash by 12,940 bytes.
+image exceeded flash by 12,940 bytes with the PX4 v1.15 ARM GCC 9 toolchain
+before the metrics update; it is not the target used for the packaged image.
 
-| Target | Flash used of 1,966,080 bytes | Static AXI SRAM |
+| Target | Flash used of 1,966,080 bytes | Static RAM (`.data` + `.bss`) |
 | --- | ---: | ---: |
-| `px4_fmu-v6x_multicopter` | 1,894,628 (96.4%) | 99,740 of 524,288 (19.0%) |
+| `px4_fmu-v6x_multicopter` | 1,898,180 (96.55%) | 102,620 bytes |
 
-Future module additions must repeat the size check.
+These values describe the packaged metrics image; its exact source identifier
+and size data are in [the build manifest](../firmware/build_manifest.json).
+Runtime heap and task stacks are additional to static RAM. Future module
+additions must repeat the size check.
 
 ## Deliberately staged hardware modes
 
@@ -120,7 +123,13 @@ limits on the acceleration setpoint.
 
 `tinympc_chicane status` reports solve count, latest/worst solve time,
 termination policy, iteration count, primal/dual residuals, and deadline
-misses. The same data is published in `debug_array` with name `tmch`:
+misses. A legacy subset is published in `debug_array` with name `tmch`.
+
+The staged image also publishes the named `tinympc_status` topic every cycle,
+including failures, with expanded timing, outcome, tracking and resource
+metrics. It is registered in the default ULog logger. See
+[onboard metrics](onboard_metrics.md) for collection settings, field semantics
+and percentile analysis. The legacy debug array below is retained.
 
 | Index | Value |
 | ---: | --- |
